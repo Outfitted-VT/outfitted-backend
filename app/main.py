@@ -12,13 +12,20 @@ Backend API for Outfitted.
 
 All endpoints live under `/api/v1`. Request and response bodies are JSON.
 
+**Authentication:** `POST /auth/login` returns a short-lived access token in the body and
+sets a long-lived refresh token as an HttpOnly cookie. Send the access token on protected
+endpoints as `Authorization: Bearer <access_token>`; when it expires, `POST /auth/refresh`
+returns a new one. In this page, click **Authorize** and paste the access token to try
+protected endpoints.
+
 **Errors** always have a `detail` field:
 - `4xx` from the API: `{"detail": "Human-readable message"}`
 - `422` validation errors: `{"detail": [{"loc": [...], "msg": "...", "type": "..."}]}`
 """
 
 TAGS_METADATA = [
-    {"name": "auth", "description": "Sign up and (soon) log in."},
+    {"name": "auth", "description": "Sign up, log in, refresh, and log out."},
+    {"name": "users", "description": "User accounts. Requires a Bearer token."},
     {"name": "health", "description": "Service and database status."},
 ]
 

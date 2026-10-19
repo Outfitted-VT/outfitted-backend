@@ -1,8 +1,9 @@
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import verify_password
-from app.services.user import get_user_by_email
+from app.repositories import user as user_repository
 
 SIGNUP_URL = "/api/v1/auth/signup"
 
@@ -22,7 +23,7 @@ def test_signup_creates_user(client: TestClient, db: Session) -> None:
     assert "password" not in body
     assert "hashed_password" not in body
 
-    user = get_user_by_email(db, "jane@example.com")
+    user = user_repository.get_by_email(db, "jane@example.com")
     assert user is not None
     assert user.hashed_password != "s3cure-passw0rd"
     assert verify_password("s3cure-passw0rd", user.hashed_password)
@@ -67,3 +68,19 @@ def test_signup_created_at_is_utc(client: TestClient) -> None:
     response = client.post(SIGNUP_URL, json={"email": "a@example.com", "password": "s3cure-passw0rd"})
 
     assert response.json()["created_at"].endswith(("Z", "+00:00"))
+
+
+def test_signup_concurrent_duplicate_returns_409(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client.post(SIGNUP_URL, json={"email": "jane@example.com", "password": "s3cure-passw0rd"})
+    # Simulate a second request whose duplicate check ran before the first one committed:
+    # the check passes, so only the database's unique constraint catches the duplicate.
+    monkeypatch.setattr(user_repository, "get_by_email", lambda db, email: None)
+
+    response = client.post(SIGNUP_URL, json={"email": "jane@example.com", "password": "s3cure-passw0rd"})
+
+    assert response.status_code == 409
+    monkeypatch.undo()
+    # The session was rolled back cleanly and is still usable.
+    assert client.post(SIGNUP_URL, json={"email": "bob@example.com", "password": "s3cure-passw0rd"}).status_code == 201

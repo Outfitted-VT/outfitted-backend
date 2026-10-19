@@ -31,6 +31,7 @@ def db() -> Generator[Session, None, None]:
 @pytest.fixture
 def client(db: Session) -> Generator[TestClient, None, None]:
     app.dependency_overrides[get_db] = lambda: db
-    with TestClient(app) as test_client:
+    # HTTPS so the client sends the Secure refresh cookie, like a browser would.
+    with TestClient(app, base_url="https://testserver") as test_client:
         yield test_client
     app.dependency_overrides.clear()
