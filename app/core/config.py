@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     DATABASE_URL: str = "sqlite:///./outfitted.db"
 
+    # Uploaded files. MEDIA_BASE_URL is where clients load them from (a CDN/bucket URL later).
+    MEDIA_ROOT: str = "media"
+    MEDIA_BASE_URL: str = "http://localhost:8000/media"
+    MAX_UPLOAD_BYTES: int = 10 * 1024 * 1024
+
     SECRET_KEY: str = INSECURE_DEV_SECRET_KEY
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15

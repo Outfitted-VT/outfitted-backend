@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -8,8 +8,10 @@ from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import User
 from app.services.user import get_user
+from app.storage import Storage, get_storage
 
 SessionDep = Annotated[Session, Depends(get_db)]
+StorageDep = Annotated[Storage, Depends(get_storage)]
 
 # auto_error=False so a missing header returns our 401 instead of FastAPI's default 403.
 bearer_scheme = HTTPBearer(auto_error=False, description="Access token from `POST /auth/login`")
@@ -38,3 +40,6 @@ def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+PageLimit = Annotated[int, Query(ge=1, le=50, description="Items per page.")]
+PageCursor = Annotated[str | None, Query(description="`next_cursor` from the previous page.")]

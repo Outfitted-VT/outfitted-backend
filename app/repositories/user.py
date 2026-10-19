@@ -16,6 +16,10 @@ def get_by_email(db: Session, email: str) -> User | None:
     return db.scalar(select(User).where(User.email == email.lower()))
 
 
+def get_by_username(db: Session, username: str) -> User | None:
+    return db.scalar(select(User).where(User.username == username.lower()))
+
+
 def add(db: Session, user: User) -> User:
     """Insert the user and load database-generated fields (e.g. created_at).
 

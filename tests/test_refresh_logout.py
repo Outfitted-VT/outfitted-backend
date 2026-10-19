@@ -24,7 +24,7 @@ PASSWORD = "s3cure-passw0rd"
 
 @pytest.fixture(autouse=True)
 def registered_user(client: TestClient) -> None:
-    client.post(SIGNUP_URL, json={"email": EMAIL, "password": PASSWORD})
+    client.post(SIGNUP_URL, json={"email": EMAIL, "username": "jane", "password": PASSWORD})
 
 
 def login(client: TestClient) -> str:

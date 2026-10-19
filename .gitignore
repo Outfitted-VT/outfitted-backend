@@ -14,6 +14,9 @@ build/
 .vscode/
 .idea/
 
+# Uploaded files in development
+media/
+
 # Local SQLite databases
 *.db
 *.sqlite3

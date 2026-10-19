@@ -45,7 +45,10 @@ app/
 ├── main.py              # App factory, middleware, error handlers, router mounting
 ├── core/
 │   ├── config.py        # Settings loaded from env / .env
-│   └── security.py      # Password hashing, JWT access tokens
+│   ├── security.py      # Password hashing, JWT and refresh tokens
+│   ├── images.py        # Upload validation and re-encoding (strips EXIF)
+│   └── pagination.py    # Opaque cursors for newest-first lists
+├── storage.py           # File storage interface (local disk now, S3/R2 later)
 ├── db/                  # SQLAlchemy Base, engine/session, shared mixins
 ├── models/              # SQLAlchemy models (database tables)
 ├── repositories/        # Database queries, one module per model
