@@ -1,11 +1,17 @@
+import mimetypes
+
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+
+# Some OSes (e.g. Windows) don't map .webp, so /media would serve it as octet-stream.
+mimetypes.add_type("image/webp", ".webp")
 
 DESCRIPTION = """
 Backend API for Outfitted.
@@ -25,7 +31,8 @@ protected endpoints.
 
 TAGS_METADATA = [
     {"name": "auth", "description": "Sign up, log in, refresh, and log out."},
-    {"name": "users", "description": "User accounts. Requires a Bearer token."},
+    {"name": "users", "description": "Your account and public profiles."},
+    {"name": "images", "description": "Upload images for fits and avatars."},
     {"name": "health", "description": "Service and database status."},
 ]
 
@@ -56,6 +63,10 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=422, content=jsonable_encoder({"detail": errors}))
 
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+    # Serve uploaded files from local storage. With S3/R2, MEDIA_BASE_URL points at the
+    # bucket or CDN instead and this mount goes unused.
+    app.mount("/media", StaticFiles(directory=settings.MEDIA_ROOT, check_dir=False), name="media")
 
     @app.get("/", tags=["root"])
     def root() -> dict[str, str]:

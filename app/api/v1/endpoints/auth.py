@@ -8,7 +8,7 @@ from app.schemas.auth import LoginRequest, Token
 from app.schemas.error import ErrorResponse
 from app.schemas.user import UserCreate, UserRead
 from app.services import auth as auth_service
-from app.services.user import EmailAlreadyRegisteredError, create_user
+from app.services.user import EmailAlreadyRegisteredError, UsernameTakenError, create_user
 
 router = APIRouter()
 
@@ -21,9 +21,14 @@ router = APIRouter()
     responses={
         status.HTTP_409_CONFLICT: {
             "model": ErrorResponse,
-            "description": "An account with this email already exists.",
+            "description": "The email or username is already in use.",
             "content": {
-                "application/json": {"example": {"detail": "Email is already registered"}}
+                "application/json": {
+                    "examples": {
+                        "email": {"value": {"detail": "Email is already registered"}},
+                        "username": {"value": {"detail": "Username is already taken"}},
+                    }
+                }
             },
         },
     },
@@ -34,6 +39,8 @@ def signup(user_in: UserCreate, db: SessionDep) -> UserRead:
     call `POST /auth/login` afterwards to get a token.
 
     - **email**: must be a valid email; stored lowercase, so sign-up is case-insensitive.
+    - **username**: 3-30 characters of lowercase letters, numbers, `_` and `.`;
+      stored lowercase. Shown publicly on the profile and fits.
     - **password**: 8–128 characters. Never returned by the API.
     - **full_name**: optional, up to 100 characters.
 
@@ -45,6 +52,10 @@ def signup(user_in: UserCreate, db: SessionDep) -> UserRead:
     except EmailAlreadyRegisteredError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Email is already registered"
+        ) from None
+    except UsernameTakenError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Username is already taken"
         ) from None
     return UserRead.model_validate(user)
 

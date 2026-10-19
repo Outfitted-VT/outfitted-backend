@@ -21,7 +21,7 @@ PASSWORD = "s3cure-passw0rd"
 
 @pytest.fixture
 def registered_user(client: TestClient) -> dict:
-    response = client.post(SIGNUP_URL, json={"email": EMAIL, "password": PASSWORD})
+    response = client.post(SIGNUP_URL, json={"email": EMAIL, "username": "jane", "password": PASSWORD})
     assert response.status_code == 201
     return response.json()
 

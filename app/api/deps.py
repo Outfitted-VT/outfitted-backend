@@ -8,8 +8,10 @@ from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import User
 from app.services.user import get_user
+from app.storage import Storage, get_storage
 
 SessionDep = Annotated[Session, Depends(get_db)]
+StorageDep = Annotated[Storage, Depends(get_storage)]
 
 # auto_error=False so a missing header returns our 401 instead of FastAPI's default 403.
 bearer_scheme = HTTPBearer(auto_error=False, description="Access token from `POST /auth/login`")

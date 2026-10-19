@@ -5,3 +5,4 @@ alembic>=1.13
 psycopg[binary]>=3.2
 pwdlib[argon2]>=0.2
 pyjwt>=2.9
+pillow>=11.0

@@ -11,7 +11,7 @@ SIGNUP_URL = "/api/v1/auth/signup"
 def test_signup_creates_user(client: TestClient, db: Session) -> None:
     response = client.post(
         SIGNUP_URL,
-        json={"email": "Jane@Example.com", "password": "s3cure-passw0rd", "full_name": "Jane Doe"},
+        json={"username": "user1", "email": "Jane@Example.com", "password": "s3cure-passw0rd", "full_name": "Jane Doe"},
     )
 
     assert response.status_code == 201
@@ -30,42 +30,42 @@ def test_signup_creates_user(client: TestClient, db: Session) -> None:
 
 
 def test_signup_full_name_is_optional(client: TestClient) -> None:
-    response = client.post(SIGNUP_URL, json={"email": "a@example.com", "password": "s3cure-passw0rd"})
+    response = client.post(SIGNUP_URL, json={"username": "user2", "email": "a@example.com", "password": "s3cure-passw0rd"})
 
     assert response.status_code == 201
     assert response.json()["full_name"] is None
 
 
 def test_signup_duplicate_email_is_case_insensitive(client: TestClient) -> None:
-    client.post(SIGNUP_URL, json={"email": "jane@example.com", "password": "s3cure-passw0rd"})
-    response = client.post(SIGNUP_URL, json={"email": "JANE@example.com", "password": "another-pass1"})
+    client.post(SIGNUP_URL, json={"username": "user3", "email": "jane@example.com", "password": "s3cure-passw0rd"})
+    response = client.post(SIGNUP_URL, json={"username": "user4", "email": "JANE@example.com", "password": "another-pass1"})
 
     assert response.status_code == 409
     assert response.json() == {"detail": "Email is already registered"}
 
 
 def test_signup_rejects_invalid_email(client: TestClient) -> None:
-    response = client.post(SIGNUP_URL, json={"email": "not-an-email", "password": "s3cure-passw0rd"})
+    response = client.post(SIGNUP_URL, json={"username": "user5", "email": "not-an-email", "password": "s3cure-passw0rd"})
 
     assert response.status_code == 422
 
 
 def test_signup_rejects_short_password(client: TestClient) -> None:
-    response = client.post(SIGNUP_URL, json={"email": "a@example.com", "password": "short"})
+    response = client.post(SIGNUP_URL, json={"username": "user6", "email": "a@example.com", "password": "short"})
 
     assert response.status_code == 422
     assert response.json()["detail"][0]["loc"] == ["body", "password"]
 
 
 def test_validation_errors_do_not_echo_input(client: TestClient) -> None:
-    response = client.post(SIGNUP_URL, json={"email": "a@example.com", "password": "secret1"})
+    response = client.post(SIGNUP_URL, json={"username": "user7", "email": "a@example.com", "password": "secret1"})
 
     assert response.status_code == 422
     assert "secret1" not in response.text
 
 
 def test_signup_created_at_is_utc(client: TestClient) -> None:
-    response = client.post(SIGNUP_URL, json={"email": "a@example.com", "password": "s3cure-passw0rd"})
+    response = client.post(SIGNUP_URL, json={"username": "user8", "email": "a@example.com", "password": "s3cure-passw0rd"})
 
     assert response.json()["created_at"].endswith(("Z", "+00:00"))
 
@@ -73,14 +73,14 @@ def test_signup_created_at_is_utc(client: TestClient) -> None:
 def test_signup_concurrent_duplicate_returns_409(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    client.post(SIGNUP_URL, json={"email": "jane@example.com", "password": "s3cure-passw0rd"})
+    client.post(SIGNUP_URL, json={"username": "user9", "email": "jane@example.com", "password": "s3cure-passw0rd"})
     # Simulate a second request whose duplicate check ran before the first one committed:
     # the check passes, so only the database's unique constraint catches the duplicate.
     monkeypatch.setattr(user_repository, "get_by_email", lambda db, email: None)
 
-    response = client.post(SIGNUP_URL, json={"email": "jane@example.com", "password": "s3cure-passw0rd"})
+    response = client.post(SIGNUP_URL, json={"username": "user10", "email": "jane@example.com", "password": "s3cure-passw0rd"})
 
     assert response.status_code == 409
     monkeypatch.undo()
     # The session was rolled back cleanly and is still usable.
-    assert client.post(SIGNUP_URL, json={"email": "bob@example.com", "password": "s3cure-passw0rd"}).status_code == 201
+    assert client.post(SIGNUP_URL, json={"username": "user11", "email": "bob@example.com", "password": "s3cure-passw0rd"}).status_code == 201
