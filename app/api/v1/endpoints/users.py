@@ -1,13 +1,12 @@
-from typing import Annotated
+from fastapi import APIRouter, HTTPException, status
 
-from fastapi import APIRouter, HTTPException, Query, status
-
-from app.api.deps import CurrentUser, SessionDep
+from app.api.deps import CurrentUser, PageCursor, PageLimit, SessionDep
 from app.core.pagination import InvalidCursorError
 from app.schemas.error import ErrorResponse
 from app.schemas.fit import FitRead
 from app.schemas.pagination import Page
 from app.schemas.user import ProfileRead, UserRead, UserUpdate
+from app.services.engagement import list_saved_fits
 from app.services.fit import list_fits
 from app.services.image import ImageNotFoundError
 from app.services.user import UsernameTakenError, get_user_by_username, update_profile
@@ -76,6 +75,31 @@ def update_current_user(
     return UserRead.model_validate(user)
 
 
+INVALID_CURSOR_RESPONSE = {
+    status.HTTP_400_BAD_REQUEST: {
+        "model": ErrorResponse,
+        "content": {"application/json": {"example": {"detail": "Invalid cursor"}}},
+    },
+}
+
+
+@router.get(
+    "/me/saved",
+    response_model=Page[FitRead],
+    summary="List your saved fits",
+    responses={**UNAUTHORIZED_RESPONSE, **INVALID_CURSOR_RESPONSE},
+)
+def read_saved_fits(
+    current_user: CurrentUser, db: SessionDep, limit: PageLimit = 20, cursor: PageCursor = None
+) -> Page[FitRead]:
+    """Fits you saved, most recently saved first. Only you can see your saves."""
+    try:
+        page = list_saved_fits(db, current_user, limit=limit, cursor=cursor)
+    except InvalidCursorError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from None
+    return Page(items=[FitRead.from_view(view) for view in page.views], next_cursor=page.next_cursor)
+
+
 @router.get(
     "/{username}",
     response_model=ProfileRead,
@@ -88,17 +112,6 @@ def read_profile(username: str, current_user: CurrentUser, db: SessionDep) -> Pr
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return ProfileRead.model_validate(user)
-
-
-PageLimit = Annotated[int, Query(ge=1, le=50, description="Items per page.")]
-PageCursor = Annotated[str | None, Query(description="`next_cursor` from the previous page.")]
-
-INVALID_CURSOR_RESPONSE = {
-    status.HTTP_400_BAD_REQUEST: {
-        "model": ErrorResponse,
-        "content": {"application/json": {"example": {"detail": "Invalid cursor"}}},
-    },
-}
 
 
 @router.get(
@@ -119,7 +132,7 @@ def read_user_fits(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     try:
-        page = list_fits(db, limit=limit, cursor=cursor, author=user)
+        page = list_fits(db, current_user, limit=limit, cursor=cursor, author=user)
     except InvalidCursorError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from None
-    return Page(items=[FitRead.from_model(fit) for fit in page.fits], next_cursor=page.next_cursor)
+    return Page(items=[FitRead.from_view(view) for view in page.views], next_cursor=page.next_cursor)

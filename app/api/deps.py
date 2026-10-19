@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -40,3 +40,6 @@ def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+PageLimit = Annotated[int, Query(ge=1, le=50, description="Items per page.")]
+PageCursor = Annotated[str | None, Query(description="`next_cursor` from the previous page.")]

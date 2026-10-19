@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.pagination import decode_cursor, encode_cursor
 from app.models.fit import Fit, FitImage, FitItem
 from app.models.user import User
+from app.repositories import engagement as engagement_repository
 from app.repositories import fit as fit_repository
 from app.schemas.fit import FitCreate, FitItemIn, FitUpdate
 from app.services.image import get_owned_images
@@ -32,9 +33,52 @@ class InvalidItemPinError(Exception):
 
 
 @dataclass(frozen=True)
+class FitView:
+    """A fit as seen by a particular viewer."""
+
+    fit: Fit
+    like_count: int
+    liked_by_me: bool
+    saved_by_me: bool
+
+
+@dataclass(frozen=True)
 class FitPage:
-    fits: list[Fit]
+    views: list[FitView]
     next_cursor: str | None
+
+
+def describe_fits(db: Session, viewer: User, fits: list[Fit]) -> list[FitView]:
+    """Attach like counts and the viewer's likes/saves, in three queries for the whole list."""
+    fit_ids = [fit.id for fit in fits]
+    if not fit_ids:
+        return []
+    counts = engagement_repository.like_counts(db, fit_ids)
+    liked = engagement_repository.liked_fit_ids(db, viewer.id, fit_ids)
+    saved = engagement_repository.saved_fit_ids(db, viewer.id, fit_ids)
+    return [
+        FitView(
+            fit=fit,
+            like_count=counts.get(fit.id, 0),
+            liked_by_me=fit.id in liked,
+            saved_by_me=fit.id in saved,
+        )
+        for fit in fits
+    ]
+
+
+def describe_fit(db: Session, viewer: User, fit: Fit) -> FitView:
+    return describe_fits(db, viewer, [fit])[0]
+
+
+def paginate(db: Session, viewer: User, rows: list, limit: int, cursor_of) -> FitPage:
+    """Turn `limit + 1` fetched rows into a page. `cursor_of(row)` gives (created_at, id)
+    and each row is a Fit or a (Fit, ...) tuple."""
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    fits = [row[0] if isinstance(row, tuple) else row for row in rows]
+    next_cursor = encode_cursor(*cursor_of(rows[-1])) if has_more else None
+    return FitPage(views=describe_fits(db, viewer, fits), next_cursor=next_cursor)
 
 
 def _build_items(items: list[FitItemIn]) -> list[FitItem]:
@@ -126,7 +170,7 @@ def delete_fit(db: Session, storage: Storage, editor: User, fit_id: uuid.UUID) -
 
 
 def list_fits(
-    db: Session, *, limit: int, cursor: str | None, author: User | None = None
+    db: Session, viewer: User, *, limit: int, cursor: str | None, author: User | None = None
 ) -> FitPage:
     """Newest fits first, optionally by one author. Raises InvalidCursorError."""
     decoded = decode_cursor(cursor) if cursor else None
@@ -134,8 +178,4 @@ def list_fits(
     fits = fit_repository.list_newest(
         db, limit=limit + 1, cursor=decoded, user_id=author.id if author else None
     )
-    if len(fits) <= limit:
-        return FitPage(fits=fits, next_cursor=None)
-    fits = fits[:limit]
-    last = fits[-1]
-    return FitPage(fits=fits, next_cursor=encode_cursor(last.created_at, last.id))
+    return paginate(db, viewer, fits, limit, lambda fit: (fit.created_at, fit.id))

@@ -155,15 +155,22 @@ class FitRead(BaseModel):
     caption: str | None
     images: list[ImageRead]
     items: list[FitItemRead]
+    like_count: int
+    liked_by_me: bool
+    saved_by_me: bool
     created_at: UtcDatetime
 
     @classmethod
-    def from_model(cls, fit) -> "FitRead":
+    def from_view(cls, view) -> "FitRead":
+        fit = view.fit
         return cls(
             id=fit.id,
             author=UserSummary.model_validate(fit.author),
             caption=fit.caption,
             images=[ImageRead.model_validate(image) for image in fit.images],
             items=[FitItemRead.from_model(item) for item in fit.items],
+            like_count=view.like_count,
+            liked_by_me=view.liked_by_me,
+            saved_by_me=view.saved_by_me,
             created_at=fit.created_at,
         )

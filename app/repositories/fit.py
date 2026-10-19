@@ -10,7 +10,7 @@ from app.models.fit import Fit, FitImage
 from app.models.user import User
 
 
-def _with_details(statement: Select) -> Select:
+def with_details(statement: Select) -> Select:
     # Load everything a FitRead needs up front, avoiding one query per fit (N+1).
     return statement.options(
         selectinload(Fit.author), selectinload(Fit.fit_images), selectinload(Fit.items)
@@ -19,7 +19,7 @@ def _with_details(statement: Select) -> Select:
 
 def get(db: Session, fit_id: uuid.UUID) -> Fit | None:
     return db.scalar(
-        _with_details(select(Fit).where(Fit.id == fit_id)).execution_options(populate_existing=True)
+        with_details(select(Fit).where(Fit.id == fit_id)).execution_options(populate_existing=True)
     )
 
 
@@ -54,4 +54,4 @@ def list_newest(
             )
         )
     statement = statement.order_by(Fit.created_at.desc(), Fit.id.desc()).limit(limit)
-    return list(db.scalars(_with_details(statement)))
+    return list(db.scalars(with_details(statement)))
