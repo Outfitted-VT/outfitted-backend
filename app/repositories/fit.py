@@ -40,12 +40,27 @@ def used_image_ids(db: Session, image_ids: list[uuid.UUID]) -> set[uuid.UUID]:
 
 
 def list_newest(
-    db: Session, *, limit: int, cursor: Cursor | None, user_id: uuid.UUID | None = None
+    db: Session,
+    *,
+    limit: int,
+    cursor: Cursor | None,
+    user_id: uuid.UUID | None = None,
+    user_ids=None,
+    include_user_id: uuid.UUID | None = None,
 ) -> list[Fit]:
-    """Fits by active users, newest first, optionally by one author. Returns up to `limit` rows."""
+    """Fits by active users, newest first. Returns up to `limit` rows.
+
+    Filter by one author (`user_id`), or by a subquery of authors (`user_ids`) plus
+    optionally one more author (`include_user_id`).
+    """
     statement = select(Fit).join(Fit.author).where(User.is_active)
     if user_id is not None:
         statement = statement.where(Fit.user_id == user_id)
+    if user_ids is not None:
+        authors = Fit.user_id.in_(user_ids)
+        if include_user_id is not None:
+            authors = or_(authors, Fit.user_id == include_user_id)
+        statement = statement.where(authors)
     if cursor is not None:
         statement = statement.where(
             or_(

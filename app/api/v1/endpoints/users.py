@@ -5,8 +5,9 @@ from app.core.pagination import InvalidCursorError
 from app.schemas.error import ErrorResponse
 from app.schemas.fit import FitRead
 from app.schemas.pagination import Page
-from app.schemas.user import ProfileRead, UserRead, UserUpdate
+from app.schemas.user import ProfileRead, UserRead, UserSummary, UserUpdate
 from app.services.engagement import list_saved_fits
+from app.services import follow as follow_service
 from app.services.fit import list_fits
 from app.services.image import ImageNotFoundError
 from app.services.user import UsernameTakenError, get_user_by_username, update_profile
@@ -107,11 +108,11 @@ def read_saved_fits(
     responses={**UNAUTHORIZED_RESPONSE, **USER_NOT_FOUND_RESPONSE},
 )
 def read_profile(username: str, current_user: CurrentUser, db: SessionDep) -> ProfileRead:
-    """Return someone's public profile. Doesn't include their email."""
-    user = get_user_by_username(db, username)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return ProfileRead.model_validate(user)
+    """Return someone's public profile with counts. Doesn't include their email."""
+    try:
+        return ProfileRead.from_view(follow_service.get_profile(db, current_user, username))
+    except follow_service.UserNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from None
 
 
 @router.get(
@@ -136,3 +137,92 @@ def read_user_fits(
     except InvalidCursorError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from None
     return Page(items=[FitRead.from_view(view) for view in page.views], next_cursor=page.next_cursor)
+
+
+def _user_not_found() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+
+@router.put(
+    "/{username}/follow",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Follow a user",
+    responses={
+        **UNAUTHORIZED_RESPONSE,
+        **USER_NOT_FOUND_RESPONSE,
+        status.HTTP_400_BAD_REQUEST: {
+            "model": ErrorResponse,
+            "content": {"application/json": {"example": {"detail": "You can't follow yourself"}}},
+        },
+    },
+)
+def follow_user(username: str, current_user: CurrentUser, db: SessionDep) -> None:
+    """Idempotent: following someone you already follow does nothing."""
+    try:
+        follow_service.follow(db, current_user, username)
+    except follow_service.UserNotFoundError:
+        raise _user_not_found() from None
+    except follow_service.CannotFollowSelfError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="You can't follow yourself"
+        ) from None
+
+
+@router.delete(
+    "/{username}/follow",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Unfollow a user",
+    responses={**UNAUTHORIZED_RESPONSE, **USER_NOT_FOUND_RESPONSE},
+)
+def unfollow_user(username: str, current_user: CurrentUser, db: SessionDep) -> None:
+    """Idempotent."""
+    try:
+        follow_service.unfollow(db, current_user, username)
+    except follow_service.UserNotFoundError:
+        raise _user_not_found() from None
+
+
+def _user_list(list_users, username: str, db, limit: int, cursor: str | None) -> Page[UserSummary]:
+    try:
+        page = list_users(db, username, limit=limit, cursor=cursor)
+    except follow_service.UserNotFoundError:
+        raise _user_not_found() from None
+    except InvalidCursorError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from None
+    return Page(
+        items=[UserSummary.model_validate(user) for user in page.users], next_cursor=page.next_cursor
+    )
+
+
+@router.get(
+    "/{username}/followers",
+    response_model=Page[UserSummary],
+    summary="List a user's followers",
+    responses={**UNAUTHORIZED_RESPONSE, **USER_NOT_FOUND_RESPONSE, **INVALID_CURSOR_RESPONSE},
+)
+def read_followers(
+    username: str,
+    current_user: CurrentUser,
+    db: SessionDep,
+    limit: PageLimit = 20,
+    cursor: PageCursor = None,
+) -> Page[UserSummary]:
+    """Most recent followers first."""
+    return _user_list(follow_service.list_followers, username, db, limit, cursor)
+
+
+@router.get(
+    "/{username}/following",
+    response_model=Page[UserSummary],
+    summary="List who a user follows",
+    responses={**UNAUTHORIZED_RESPONSE, **USER_NOT_FOUND_RESPONSE, **INVALID_CURSOR_RESPONSE},
+)
+def read_following(
+    username: str,
+    current_user: CurrentUser,
+    db: SessionDep,
+    limit: PageLimit = 20,
+    cursor: PageCursor = None,
+) -> Page[UserSummary]:
+    """Most recently followed first."""
+    return _user_list(follow_service.list_following, username, db, limit, cursor)

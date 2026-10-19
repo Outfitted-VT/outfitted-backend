@@ -3,6 +3,7 @@
 from app.db.base import Base
 from app.models.engagement import FitLike, FitSave
 from app.models.fit import Fit, FitImage, FitItem
+from app.models.follow import Follow
 from app.models.image import Image
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
@@ -14,6 +15,7 @@ __all__ = [
     "FitItem",
     "FitLike",
     "FitSave",
+    "Follow",
     "Image",
     "RefreshToken",
     "User",

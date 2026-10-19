@@ -94,7 +94,7 @@ Every error response has a `detail` field. Check the status code first:
 }
 ```
 
-## Endpoints
+## Auth
 
 ### Sign up
 
@@ -107,12 +107,14 @@ Creates a new account. Does **not** log the user in. Call [Log in](#log-in) afte
 | Field | Type | Required | Rules |
 |---|---|---|---|
 | `email` | string | yes | Valid email. Case-insensitive (`Jane@X.com` and `jane@x.com` are the same account). |
+| `username` | string | yes | 3–30 characters: lowercase letters, numbers, `_` and `.`. Can't start/end with `.` or contain `..`. Stored lowercase. Some names (`me`, `admin`, …) are reserved. Public. |
 | `password` | string | yes | 8–128 characters. |
 | `full_name` | string | no | Up to 100 characters. |
 
 ```json
 {
   "email": "jane@example.com",
+  "username": "jane.doe",
   "password": "s3cure-passw0rd",
   "full_name": "Jane Doe"
 }
@@ -120,29 +122,23 @@ Creates a new account. Does **not** log the user in. Call [Log in](#log-in) afte
 
 **Responses**
 
-`201 Created` — the new user. The password is never returned.
-
-```json
-{
-  "id": "67a94758-7aa1-4168-b286-4789803a30a8",
-  "email": "jane@example.com",
-  "full_name": "Jane Doe",
-  "is_active": true,
-  "created_at": "2026-10-19T16:42:34Z"
-}
-```
+`201 Created` — the new user (same shape as [Get your account](#get-your-account)). The password is never returned.
 
 - `id` is a UUID string.
-- `email` comes back lowercased.
+- `email` and `username` come back lowercased.
 - `created_at` is ISO 8601 in UTC.
 
-`409 Conflict` — email already registered.
+`409 Conflict` — email or username already in use. Check `detail` to tell which:
 
 ```json
 { "detail": "Email is already registered" }
 ```
 
-`422 Unprocessable Entity` — invalid email, password too short/long, etc. See [Errors](#errors).
+```json
+{ "detail": "Username is already taken" }
+```
+
+`422 Unprocessable Entity` — invalid email or username, password too short/long, etc. See [Errors](#errors).
 
 **Example**
 
@@ -150,13 +146,13 @@ Creates a new account. Does **not** log the user in. Call [Log in](#log-in) afte
 const res = await fetch("http://localhost:8000/api/v1/auth/signup", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ email, password, full_name: fullName }),
+  body: JSON.stringify({ email, username, password, full_name: fullName }),
 });
 
 if (res.status === 201) {
   const user = await res.json();
 } else if (res.status === 409) {
-  // show "An account with this email already exists"
+  const { detail } = await res.json(); // email or username taken
 } else if (res.status === 422) {
   const { detail } = await res.json();
   // detail: [{ loc: ["body", "password"], msg: "...", type: "..." }, ...]
@@ -312,40 +308,319 @@ localStorage.removeItem("access_token");
 // redirect to login
 ```
 
-### Get current user
+## Conventions for the endpoints below
 
-`GET /users/me` — 🔒 requires an access token
+- **Everything requires an access token** (`Authorization: Bearer ...`) — use `apiFetch` from [Refresh](#refresh). Without one you get **401**.
+- **IDs** are UUID strings. **Timestamps** are ISO 8601 in UTC.
+- **Like, save, and follow are idempotent.** `PUT` turns it on, `DELETE` turns it off, and repeating either is harmless. They return **204** with no body. That makes optimistic UI easy: update the screen immediately, send the request, and only roll back if it fails.
 
-Returns the logged-in user.
+### Pagination
 
-**Responses**
+Every list endpoint returns:
 
-`200 OK` — same shape as the sign-up response.
+```json
+{ "items": [ ... ], "next_cursor": "WyIyMDI2LTEwLTE5VDIwOjIz..." }
+```
+
+- Query params: `limit` (1–50, default 20) and `cursor`.
+- To load more, send `next_cursor` back as `cursor`. **`next_cursor: null` means there's nothing more.**
+- Cursors are opaque strings — don't build or parse them. A malformed cursor returns **400** `{"detail": "Invalid cursor"}`.
+- Cursor pagination doesn't skip or repeat items when new posts arrive while someone scrolls (unlike page numbers). It can't jump to "page 5" — it's built for infinite scroll.
+
+```ts
+async function loadPage(path: string, cursor: string | null) {
+  const params = new URLSearchParams({ limit: "20", ...(cursor && { cursor }) });
+  const res = await apiFetch(`${path}?${params}`);
+  return res.json() as Promise<{ items: unknown[]; next_cursor: string | null }>;
+}
+```
+
+---
+
+## Account & profiles
+
+### Get your account
+
+`GET /users/me` 🔒
+
+Your own account, including private fields like `email`.
 
 ```json
 {
-  "id": "1b5975a3-f86c-413a-861a-e7fa01aeb233",
-  "email": "jane@example.com",
+  "id": "3a2f9264-afa7-4a8e-9d47-066fca89a985",
+  "username": "jane.doe",
   "full_name": "Jane Doe",
+  "avatar": {
+    "id": "517830fe-d102-41c1-84b5-f7036e814611",
+    "width": 1080,
+    "height": 1350,
+    "url": "http://localhost:8000/media/images/ac474d14eeb24db699978debafbf5f6f.webp"
+  },
+  "email": "jane.doe@example.com",
+  "bio": "Thrift addict",
   "is_active": true,
-  "created_at": "2026-10-19T18:20:40Z"
+  "created_at": "2026-10-19T20:23:53.343519Z"
 }
 ```
 
-`401 Unauthorized` — access token missing, invalid, or expired. Refresh and retry (`apiFetch` under [Refresh](#refresh) does this for you).
+`avatar` is `null` until one is set.
+
+### Update your profile
+
+`PATCH /users/me` 🔒
+
+Send **only the fields you want to change**. Omitted fields stay the same. Send `null` to clear `full_name`, `bio`, or `avatar_image_id`.
+
+| Field | Rules |
+|---|---|
+| `username` | Same rules as sign-up. Can't be `null`. |
+| `full_name` | Up to 100 characters. |
+| `bio` | Up to 160 characters. |
+| `avatar_image_id` | An image `id` from [Upload an image](#upload-an-image). |
 
 ```json
-{ "detail": "Not authenticated" }
+{ "bio": "Thrift addict", "avatar_image_id": "517830fe-d102-41c1-84b5-f7036e814611" }
 ```
 
-**Example** (using `apiFetch` from [Refresh](#refresh))
+**Responses:** `200` with your updated account · `400` `{"detail": "Image not found"}` (not your image) · `409` `{"detail": "Username is already taken"}` · `422` validation.
 
-```ts
-const res = await apiFetch("/users/me");
-if (res.ok) {
-  const user = await res.json();
+### Get a profile
+
+`GET /users/{username}` 🔒
+
+Someone's public profile with counts. Never includes their email. `{username}` is case-insensitive.
+
+```json
+{
+  "id": "3a2f9264-afa7-4a8e-9d47-066fca89a985",
+  "username": "jane.doe",
+  "full_name": "Jane Doe",
+  "avatar": { "id": "...", "width": 1080, "height": 1350, "url": "http://localhost:8000/media/images/....webp" },
+  "bio": "Thrift addict",
+  "fit_count": 1,
+  "follower_count": 1,
+  "following_count": 0,
+  "is_following": true,
+  "created_at": "2026-10-19T20:23:53.343519Z"
 }
 ```
+
+- `is_following` — whether **you** follow them (always `false` on your own profile).
+- `404` `{"detail": "User not found"}`.
+
+For your own profile page, call this with your own username to get the counts.
+
+---
+
+## Images
+
+### Upload an image
+
+`POST /images` 🔒
+
+Upload one image as `multipart/form-data`, field name **`file`**. You get back an `id` to use in [Post a fit](#post-a-fit) or as `avatar_image_id`.
+
+- Accepts **JPEG, PNG, or WebP**, up to **10 MB**. (iPhone HEIC photos aren't supported yet — convert to JPEG on the client.)
+- The backend converts to WebP, scales the longest side down to 2048px, fixes rotation, and **strips metadata such as GPS location**.
+- Upload images in parallel, then create the fit with all the ids.
+
+```ts
+async function uploadImage(file: File) {
+  const body = new FormData();
+  body.append("file", file);
+  // Don't set Content-Type yourself — the browser adds the multipart boundary.
+  const res = await apiFetch("/images", { method: "POST", body });
+  if (!res.ok) throw new Error((await res.json()).detail);
+  return res.json(); // { id, url, width, height }
+}
+```
+
+**Responses:** `201` ↓ · `400` `{"detail": "File is not a supported image"}` / `"Image must be JPEG, PNG, or WebP"` · `413` `{"detail": "Image must be 10 MB or smaller"}`.
+
+```json
+{
+  "id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26",
+  "width": 1080,
+  "height": 1350,
+  "url": "http://localhost:8000/media/images/8df1d765e86743a79b11fd7d9cfd908d.webp"
+}
+```
+
+**Every image object** in the API has this shape. Use `width`/`height` to reserve space before the image loads (`aspect-ratio: width / height`) so the feed doesn't jump.
+
+---
+
+## Fits
+
+### The fit object
+
+Every endpoint that returns fits uses this shape:
+
+```json
+{
+  "id": "44bf9a0f-d9a8-4755-970f-22d87197bb13",
+  "author": {
+    "id": "3a2f9264-afa7-4a8e-9d47-066fca89a985",
+    "username": "jane.doe",
+    "full_name": "Jane Doe",
+    "avatar": { "id": "...", "width": 1080, "height": 1350, "url": "..." }
+  },
+  "caption": "Sunday thrift haul",
+  "images": [
+    {
+      "id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26",
+      "width": 1080,
+      "height": 1350,
+      "url": "http://localhost:8000/media/images/8df1d765e86743a79b11fd7d9cfd908d.webp"
+    }
+  ],
+  "items": [
+    {
+      "id": "5a0932d4-42f2-4376-a923-95aa166ff0dd",
+      "category": "outerwear",
+      "name": "Oversized denim jacket",
+      "brand": "Levi's",
+      "color": "light wash",
+      "url": "https://example.com/jacket",
+      "pin": { "image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26", "x": 0.42, "y": 0.31 }
+    },
+    {
+      "id": "6adccd1d-9975-4379-aef6-b8d71d852949",
+      "category": "shoes",
+      "name": "Sambas",
+      "brand": "adidas",
+      "color": null,
+      "url": null,
+      "pin": null
+    }
+  ],
+  "like_count": 1,
+  "liked_by_me": true,
+  "saved_by_me": false,
+  "created_at": "2026-10-19T20:23:53.789725Z"
+}
+```
+
+- `images` are in display order (first = cover).
+- `liked_by_me` / `saved_by_me` are for **the current user**.
+- **Item pins:** `x` and `y` are fractions (0–1) of the image's width and height, measured from the top-left. To draw a pin, position it at `left: x * 100%; top: y * 100%` over the image named by `pin.image_id`. Items without a pin have `pin: null`.
+- **Categories:** `top`, `bottom`, `dress`, `outerwear`, `shoes`, `bag`, `accessory`, `jewelry`, `headwear`, `other`.
+
+### Post a fit
+
+`POST /fits` 🔒
+
+1. Upload each photo with [Upload an image](#upload-an-image).
+2. Post the fit with the image ids:
+
+| Field | Required | Rules |
+|---|---|---|
+| `image_ids` | yes | 1–10 ids from `POST /images`, in display order, no duplicates. Must be **your** images, and **each image can only be in one fit**. |
+| `caption` | no | Up to 2200 characters. |
+| `items` | no | Up to 30. See below. |
+
+**Item fields:** `category` (required, one of the categories above), `name` (required, 1–100 chars), `brand` (≤100), `color` (≤50), `url` (a valid `http(s)` link), `pin` (`{ image_id, x, y }` where `image_id` is one of this fit's `image_ids` and `x`/`y` are 0–1).
+
+```json
+{
+  "image_ids": ["16cc86b0-3f41-48af-b5b2-1ba3a3e36c26"],
+  "caption": "Sunday thrift haul",
+  "items": [
+    {
+      "category": "outerwear",
+      "name": "Oversized denim jacket",
+      "brand": "Levi's",
+      "color": "light wash",
+      "url": "https://example.com/jacket",
+      "pin": { "image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26", "x": 0.42, "y": 0.31 }
+    },
+    { "category": "shoes", "name": "Sambas", "brand": "adidas" }
+  ]
+}
+```
+
+**Responses:** `201` with [the fit object](#the-fit-object) · `400` `{"detail": "Image not found"}` (an id isn't yours or doesn't exist) · `409` `{"detail": "Image is already used in another fit"}` · `422` validation (bad category, pin pointing at an image not in `image_ids`, too many images, …).
+
+### Get a fit
+
+`GET /fits/{fit_id}` 🔒 → [the fit object](#the-fit-object), or `404` `{"detail": "Fit not found"}`.
+
+### Edit your fit
+
+`PATCH /fits/{fit_id}` 🔒
+
+Send `caption` and/or `items`. Omitted fields stay the same. **`items` replaces the whole list** — send every item you want to keep (send `[]` to remove all). Photos can't be changed after posting.
+
+**Responses:** `200` with the updated fit · `400` `{"detail": "Each item pin must reference one of the fit's images"}` · `403` `{"detail": "You can only change your own fits"}` · `404`.
+
+### Delete your fit
+
+`DELETE /fits/{fit_id}` 🔒 → `204`. Also deletes the fit's photos (unless one is your avatar). `403` if it's not yours, `404` if it doesn't exist.
+
+### List a user's fits
+
+`GET /users/{username}/fits?limit=20&cursor=...` 🔒 → [page](#pagination) of fits, newest first.
+
+---
+
+## Feeds
+
+### Explore feed
+
+`GET /fits?limit=20&cursor=...` 🔒 → [page](#pagination) of everyone's fits, newest first.
+
+### Following feed
+
+`GET /fits/following?limit=20&cursor=...` 🔒 → [page](#pagination) of fits from people you follow **plus your own**, newest first. A new user who follows nobody sees only their own fits — show the explore feed or suggested users in that case.
+
+---
+
+## Likes & saves
+
+| Action | Request | Response |
+|---|---|---|
+| Like | `PUT /fits/{fit_id}/like` | `204` |
+| Unlike | `DELETE /fits/{fit_id}/like` | `204` |
+| Save | `PUT /fits/{fit_id}/save` | `204` |
+| Unsave | `DELETE /fits/{fit_id}/save` | `204` |
+| Your saved fits | `GET /users/me/saved?limit=20&cursor=...` | [page](#pagination) of fits, most recently saved first |
+
+- All 🔒. `404` `{"detail": "Fit not found"}` if the fit doesn't exist.
+- Saves are **private** — only you see what you saved. Likes are public as a count.
+- No request body.
+
+```ts
+// Optimistic like toggle
+async function toggleLike(fit: Fit) {
+  const liked = !fit.liked_by_me;
+  setFit({ ...fit, liked_by_me: liked, like_count: fit.like_count + (liked ? 1 : -1) });
+  const res = await apiFetch(`/fits/${fit.id}/like`, { method: liked ? "PUT" : "DELETE" });
+  if (!res.ok) setFit(fit); // roll back
+}
+```
+
+---
+
+## Follows
+
+| Action | Request | Response |
+|---|---|---|
+| Follow | `PUT /users/{username}/follow` | `204` · `400` `{"detail": "You can't follow yourself"}` · `404` |
+| Unfollow | `DELETE /users/{username}/follow` | `204` · `404` |
+| Followers | `GET /users/{username}/followers?limit=20&cursor=...` | [page](#pagination) of users, most recent first |
+| Following | `GET /users/{username}/following?limit=20&cursor=...` | [page](#pagination) of users, most recent first |
+
+All 🔒. Users in follower/following lists have the compact shape:
+
+```json
+{ "id": "...", "username": "bob", "full_name": null, "avatar": null }
+```
+
+To show a Follow/Following button for someone, read `is_following` from [Get a profile](#get-a-profile).
+
+---
+
+## Health
 
 ### Health check
 

@@ -2,10 +2,13 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.api.deps import CurrentUser, SessionDep, StorageDep
+from app.api.deps import CurrentUser, PageCursor, PageLimit, SessionDep, StorageDep
+from app.core.pagination import InvalidCursorError
 from app.schemas.error import ErrorResponse
 from app.schemas.fit import FitCreate, FitRead, FitUpdate
+from app.schemas.pagination import Page
 from app.services import engagement as engagement_service
+from app.services import follow as follow_service
 from app.services.fit import (
     FitNotFoundError,
     ImageAlreadyUsedError,
@@ -15,6 +18,7 @@ from app.services.fit import (
     delete_fit,
     describe_fit,
     get_fit,
+    list_fits,
     update_fit,
 )
 from app.services.image import ImageNotFoundError
@@ -69,6 +73,36 @@ def post_fit(data: FitCreate, current_user: CurrentUser, db: SessionDep) -> FitR
             status_code=status.HTTP_409_CONFLICT, detail="Image is already used in another fit"
         ) from None
     return FitRead.from_view(describe_fit(db, current_user, fit))
+
+
+INVALID_CURSOR = _error(status.HTTP_400_BAD_REQUEST, "Invalid cursor")
+
+
+def _fit_page(list_page, db, current_user, limit: int, cursor: str | None) -> Page[FitRead]:
+    try:
+        page = list_page(db, current_user, limit=limit, cursor=cursor)
+    except InvalidCursorError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from None
+    return Page(items=[FitRead.from_view(view) for view in page.views], next_cursor=page.next_cursor)
+
+
+# Feed routes must be registered before /{fit_id}, or "following" would be parsed as a fit id.
+@router.get("", response_model=Page[FitRead], summary="Explore feed", responses=INVALID_CURSOR)
+def explore_feed(
+    current_user: CurrentUser, db: SessionDep, limit: PageLimit = 20, cursor: PageCursor = None
+) -> Page[FitRead]:
+    """Everyone's fits, newest first."""
+    return _fit_page(list_fits, db, current_user, limit, cursor)
+
+
+@router.get(
+    "/following", response_model=Page[FitRead], summary="Following feed", responses=INVALID_CURSOR
+)
+def following_feed(
+    current_user: CurrentUser, db: SessionDep, limit: PageLimit = 20, cursor: PageCursor = None
+) -> Page[FitRead]:
+    """Fits from people you follow, plus your own, newest first."""
+    return _fit_page(follow_service.following_feed, db, current_user, limit, cursor)
 
 
 @router.get("/{fit_id}", response_model=FitRead, summary="Get a fit", responses=FIT_NOT_FOUND)

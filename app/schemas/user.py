@@ -112,4 +112,24 @@ class ProfileRead(UserSummary):
     """Someone's public profile."""
 
     bio: str | None
+    fit_count: int
+    follower_count: int
+    following_count: int
+    is_following: bool = Field(description="Whether you follow this user.")
     created_at: UtcDatetime
+
+    @classmethod
+    def from_view(cls, view) -> "ProfileRead":
+        user = view.user
+        return cls(
+            id=user.id,
+            username=user.username,
+            full_name=user.full_name,
+            avatar=ImageRead.model_validate(user.avatar) if user.avatar else None,
+            bio=user.bio,
+            fit_count=view.fit_count,
+            follower_count=view.follower_count,
+            following_count=view.following_count,
+            is_following=view.is_following,
+            created_at=user.created_at,
+        )
