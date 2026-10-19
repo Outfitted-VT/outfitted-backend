@@ -19,6 +19,7 @@ fastapi dev app/main.py
 
 - API: http://localhost:8000
 - Docs: http://localhost:8000/docs
+- Frontend guide: [docs/API.md](docs/API.md)
 
 ## Database migrations
 
@@ -50,5 +51,7 @@ app/
 tests/                   # conftest.py provides an in-memory SQLite db + client
 alembic/                 # Migration environment and versions
 ```
+
+Keep [docs/API.md](docs/API.md) in sync when endpoints change.
 
 To add a resource: create `app/api/v1/endpoints/<name>.py` with an `APIRouter`, add its schemas under `app/schemas/`, and register it in `app/api/v1/router.py`.
