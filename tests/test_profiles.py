@@ -201,5 +201,5 @@ def test_cannot_use_someone_elses_image_as_avatar(
 
     response = client.patch(ME_URL, headers=user.headers, json={"avatar_image_id": image_id})
 
-    assert response.status_code == 404
+    assert response.status_code == 400
     assert response.json() == {"detail": "Image not found"}

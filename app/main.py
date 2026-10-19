@@ -33,6 +33,7 @@ TAGS_METADATA = [
     {"name": "auth", "description": "Sign up, log in, refresh, and log out."},
     {"name": "users", "description": "Your account and public profiles."},
     {"name": "images", "description": "Upload images for fits and avatars."},
+    {"name": "fits", "description": "Outfit posts with photos and tagged items."},
     {"name": "health", "description": "Service and database status."},
 ]
 
