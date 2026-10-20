@@ -169,6 +169,7 @@ if (res.status === 201) {
 |---|---|---|
 | `email` | string | yes (case-insensitive) |
 | `password` | string | yes |
+| `client` | `"web"` or `"native"` | no, defaults to `"web"`. See [Native apps](#native-apps-ios--android). |
 
 ```json
 { "email": "jane@example.com", "password": "s3cure-passw0rd" }
@@ -307,6 +308,32 @@ await fetch(`${API}/auth/logout`, { method: "POST", credentials: "include" });
 localStorage.removeItem("access_token");
 // redirect to login
 ```
+
+### Native apps (iOS / Android)
+
+Inside the Capacitor app the page and the API are on different sites, so the refresh cookie isn't stored or sent. Native apps get the refresh token in the response body instead and keep it in the device's secure storage (Keychain / Keystore). Everything else (access token, `apiFetch`, rotation) works the same.
+
+| | Web | Native |
+|---|---|---|
+| Log in | `{ email, password }` | `{ email, password, "client": "native" }` |
+| Refresh token arrives as | `refresh_token` cookie | `refresh_token` in the body, plus `refresh_expires_in` (seconds) |
+| Refresh | no body, `credentials: "include"` | body `{ "refresh_token": "..." }` |
+| Log out | no body, `credentials: "include"` | body `{ "refresh_token": "..." }` |
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "expires_in": 900,
+  "refresh_token": "kq3V0m...",
+  "refresh_expires_in": 2592000
+}
+```
+
+- **Save the new refresh token from every refresh response** before doing anything else. The old one stops working (rotation), exactly like the cookie.
+- When a refresh body is sent, any cookie is ignored and no cookie is set.
+- A cookie refresh never returns the token in the body, so a script on the website can't read the refresh token.
+- Never put the refresh token in `localStorage` — use secure storage.
 
 ## Conventions for the endpoints below
 

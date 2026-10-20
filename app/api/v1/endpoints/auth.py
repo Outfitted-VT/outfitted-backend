@@ -4,7 +4,7 @@ from fastapi import APIRouter, Cookie, HTTPException, Response, status
 
 from app.api.deps import SessionDep
 from app.core.config import settings
-from app.schemas.auth import LoginRequest, Token
+from app.schemas.auth import LoginRequest, RefreshRequest, Token
 from app.schemas.error import ErrorResponse
 from app.schemas.user import UserCreate, UserRead
 from app.services import auth as auth_service
@@ -73,7 +73,7 @@ RefreshCookie = Annotated[
 INVALID_REFRESH_TOKEN_RESPONSE = {
     status.HTTP_401_UNAUTHORIZED: {
         "model": ErrorResponse,
-        "description": "Refresh cookie missing, invalid, expired, already used, or logged out.",
+        "description": "Refresh token missing, invalid, expired, already used, or logged out.",
         "content": {"application/json": {"example": {"detail": "Invalid or expired refresh token"}}},
     },
 }
@@ -102,7 +102,19 @@ def _clear_refresh_cookie(response: Response) -> None:
     )
 
 
-def _token_response(response: Response, tokens: auth_service.IssuedTokens) -> Token:
+def _token_response(
+    response: Response, tokens: auth_service.IssuedTokens, *, native: bool
+) -> Token:
+    # Exactly one of the two: native clients get the refresh token in the body, browsers get
+    # it as a cookie. A cookie request must never get it in the body, or a script injected
+    # into the website could turn the HttpOnly cookie into a token it can read.
+    if native:
+        return Token(
+            access_token=tokens.access_token,
+            expires_in=tokens.expires_in,
+            refresh_token=tokens.refresh_token,
+            refresh_expires_in=tokens.refresh_token_max_age,
+        )
     _set_refresh_cookie(response, tokens)
     return Token(access_token=tokens.access_token, expires_in=tokens.expires_in)
 
@@ -110,6 +122,7 @@ def _token_response(response: Response, tokens: auth_service.IssuedTokens) -> To
 @router.post(
     "/login",
     response_model=Token,
+    response_model_exclude_none=True,
     summary="Log in",
     responses={
         status.HTTP_401_UNAUTHORIZED: {
@@ -130,6 +143,10 @@ def login(credentials: LoginRequest, response: Response, db: SessionDep) -> Toke
     - **Refresh token** (`refresh_token` HttpOnly cookie): JavaScript can't read it; the
       browser sends it to `/auth/refresh` and `/auth/logout` automatically.
       Call this endpoint with `credentials: "include"` so the browser stores the cookie.
+
+    **Native apps** send `"client": "native"`: the refresh token comes back in the body as
+    `refresh_token` (lifetime in seconds: `refresh_expires_in`) and no cookie is set. Keep it
+    in the device's secure storage (Keychain / Keystore).
     """
     try:
         tokens = auth_service.login(db, credentials.email, credentials.password)
@@ -139,33 +156,45 @@ def login(credentials: LoginRequest, response: Response, db: SessionDep) -> Toke
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         ) from None
-    return _token_response(response, tokens)
+    return _token_response(response, tokens, native=credentials.client == "native")
 
 
 @router.post(
     "/refresh",
     response_model=Token,
+    response_model_exclude_none=True,
     summary="Get a new access token",
     responses=INVALID_REFRESH_TOKEN_RESPONSE,
 )
-def refresh(response: Response, db: SessionDep, refresh_token: RefreshCookie = None) -> Token:
+def refresh(
+    response: Response,
+    db: SessionDep,
+    body: RefreshRequest | None = None,
+    refresh_token: RefreshCookie = None,
+) -> Token:
     """
-    Use the refresh cookie to get a new access token. Call with `credentials: "include"`.
+    Use the refresh token to get a new access token.
 
-    The refresh cookie is rotated: the old one stops working and a new one is set.
-    Also call this on page load to restore a session when there's no access token.
+    - **Browsers**: send no body; call with `credentials: "include"` so the cookie is sent.
+    - **Native apps**: send `{"refresh_token": "..."}`. Any cookie is ignored, and the new
+      refresh token comes back in the body.
+
+    The refresh token is rotated: the old one stops working and a new one is issued.
+    Also call this on app start to restore a session when there's no access token.
     """
-    if refresh_token is None:
+    native = body is not None
+    raw_token = body.refresh_token if native else refresh_token
+    if raw_token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
         )
     try:
-        tokens = auth_service.refresh(db, refresh_token)
+        tokens = auth_service.refresh(db, raw_token)
     except auth_service.InvalidRefreshTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
         ) from None
-    return _token_response(response, tokens)
+    return _token_response(response, tokens, native=native)
 
 
 @router.post(
@@ -173,13 +202,22 @@ def refresh(response: Response, db: SessionDep, refresh_token: RefreshCookie = N
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Log out",
 )
-def logout(response: Response, db: SessionDep, refresh_token: RefreshCookie = None) -> None:
+def logout(
+    response: Response,
+    db: SessionDep,
+    body: RefreshRequest | None = None,
+    refresh_token: RefreshCookie = None,
+) -> None:
     """
-    Revoke the refresh token and clear the cookie. Call with `credentials: "include"`.
+    Revoke the refresh token. Browsers: send no body, call with `credentials: "include"`, and
+    the cookie is cleared. Native apps: send `{"refresh_token": "..."}`.
 
     Always returns **204**. The access token keeps working until it expires
     (at most `expires_in` seconds), so delete it on the client too.
     """
+    if body is not None:
+        auth_service.logout(db, body.refresh_token)
+        return
     if refresh_token is not None:
         auth_service.logout(db, refresh_token)
     _clear_refresh_cookie(response)
