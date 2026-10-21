@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, fits, health, images, users
+from app.api.v1.endpoints import auth, fits, health, images, tryons, users
 
 api_router = APIRouter()
 api_router.include_router(health.router, prefix="/health", tags=["health"])
@@ -8,3 +8,4 @@ api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(images.router, prefix="/images", tags=["images"])
 api_router.include_router(fits.router, prefix="/fits", tags=["fits"])
+api_router.include_router(tryons.router, prefix="/tryons", tags=["try-on"])

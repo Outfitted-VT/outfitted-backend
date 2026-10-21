@@ -56,3 +56,21 @@ def process_image(data: bytes) -> ProcessedImage:
     output = io.BytesIO()
     image.save(output, format="WEBP", quality=85)
     return ProcessedImage(data=output.getvalue(), width=image.width, height=image.height)
+
+
+def to_jpeg(data: bytes) -> bytes:
+    """Convert a stored image to JPEG for models that only accept JPEG or PNG.
+
+    Transparent areas (e.g. a garment cut-out) become white rather than black.
+    """
+    image = Image.open(io.BytesIO(data))
+    if image.mode in ("RGBA", "LA", "P"):
+        image = image.convert("RGBA")
+        background = Image.new("RGB", image.size, "white")
+        background.paste(image, mask=image.getchannel("A"))
+        image = background
+    elif image.mode != "RGB":
+        image = image.convert("RGB")
+    output = io.BytesIO()
+    image.save(output, format="JPEG", quality=90)
+    return output.getvalue()

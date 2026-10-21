@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ForeignKey, Integer, String, Uuid
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Uuid, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -19,3 +19,5 @@ class Image(TimestampMixin, Base):
     width: Mapped[int] = mapped_column(Integer)
     height: Mapped[int] = mapped_column(Integer)
     size_bytes: Mapped[int] = mapped_column(Integer)
+    # True for AI-generated images (virtual try-on results), so clients can label them.
+    generated: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())

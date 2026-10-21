@@ -29,7 +29,8 @@ def test_upload_returns_id_url_and_size(
 
     assert response.status_code == 201
     body = response.json()
-    assert set(body) == {"id", "url", "width", "height"}
+    assert set(body) == {"id", "url", "width", "height", "generated"}
+    assert body["generated"] is False
     assert (body["width"], body["height"]) == (64, 48)
     assert body["url"].startswith(settings.MEDIA_BASE_URL)
     assert body["url"].endswith(".webp")

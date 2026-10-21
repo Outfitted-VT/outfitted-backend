@@ -15,7 +15,9 @@ class ImageNotFoundError(Exception):
     """The image doesn't exist or belongs to someone else."""
 
 
-def upload_image(db: Session, storage: Storage, owner: User, data: bytes) -> Image:
+def upload_image(
+    db: Session, storage: Storage, owner: User, data: bytes, *, generated: bool = False
+) -> Image:
     """Validate, re-encode, and store an upload. Raises InvalidImageError for bad files."""
     processed = process_image(data)
     key = f"images/{uuid.uuid4().hex}.{OUTPUT_EXTENSION}"
@@ -26,6 +28,7 @@ def upload_image(db: Session, storage: Storage, owner: User, data: bytes) -> Ima
         width=processed.width,
         height=processed.height,
         size_bytes=len(processed.data),
+        generated=generated,
     )
     try:
         image_repository.add(db, image)
