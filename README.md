@@ -21,6 +21,16 @@ fastapi dev app/main.py
 - Docs: http://localhost:8000/docs
 - Frontend guide: [docs/API.md](docs/API.md)
 
+## Virtual try-on
+
+`POST /tryons` generates images with a Google model on Gemini Enterprise Agent Platform (previously Vertex AI). It returns 503 until it's set up:
+
+1. A Google Cloud project with billing enabled and the Agent Platform API (`aiplatform.googleapis.com`) turned on.
+2. Credentials. Locally, install the gcloud CLI and run `gcloud auth application-default login`. On a server, run as a service account with the **Vertex AI User** role (`roles/aiplatform.user`).
+3. `GOOGLE_CLOUD_PROJECT=<project id>` in `.env`. Optionally `TRYON_MODEL` (default `gemini-3.1-flash-image`) and `TRYON_DAILY_LIMIT` — see `.env.example`.
+
+Every try-on is a paid request. Tests use a fake generator and never call Google.
+
 ## Database migrations
 
 Models live in `app/models/`. After adding or changing a model (and importing it in `app/models/__init__.py`):
@@ -49,6 +59,7 @@ app/
 │   ├── images.py        # Upload validation and re-encoding (strips EXIF)
 │   └── pagination.py    # Opaque cursors for newest-first lists
 ├── storage.py           # File storage interface (local disk now, S3/R2 later)
+├── tryon.py             # Try-on image generation interface (Google models)
 ├── db/                  # SQLAlchemy Base, engine/session, shared mixins
 ├── models/              # SQLAlchemy models (database tables)
 ├── repositories/        # Database queries, one module per model

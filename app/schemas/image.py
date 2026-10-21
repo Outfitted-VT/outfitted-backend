@@ -9,6 +9,7 @@ class ImageRead(BaseModel):
     id: uuid.UUID
     width: int
     height: int
+    generated: bool = Field(description="True for AI-generated images, such as try-on results.")
     storage_key: str = Field(exclude=True)
 
     model_config = ConfigDict(from_attributes=True)

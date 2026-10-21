@@ -6,6 +6,7 @@ from app.models.fit import Fit, FitImage, FitItem
 from app.models.follow import Follow
 from app.models.image import Image
 from app.models.refresh_token import RefreshToken
+from app.models.tryon import TryOn
 from app.models.user import User
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     "Follow",
     "Image",
     "RefreshToken",
+    "TryOn",
     "User",
 ]

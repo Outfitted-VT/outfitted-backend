@@ -169,6 +169,7 @@ if (res.status === 201) {
 |---|---|---|
 | `email` | string | yes (case-insensitive) |
 | `password` | string | yes |
+| `client` | `"web"` or `"native"` | no, defaults to `"web"`. See [Native apps](#native-apps-ios--android). |
 
 ```json
 { "email": "jane@example.com", "password": "s3cure-passw0rd" }
@@ -308,6 +309,32 @@ localStorage.removeItem("access_token");
 // redirect to login
 ```
 
+### Native apps (iOS / Android)
+
+Inside the Capacitor app the page and the API are on different sites, so the refresh cookie isn't stored or sent. Native apps get the refresh token in the response body instead and keep it in the device's secure storage (Keychain / Keystore). Everything else (access token, `apiFetch`, rotation) works the same.
+
+| | Web | Native |
+|---|---|---|
+| Log in | `{ email, password }` | `{ email, password, "client": "native" }` |
+| Refresh token arrives as | `refresh_token` cookie | `refresh_token` in the body, plus `refresh_expires_in` (seconds) |
+| Refresh | no body, `credentials: "include"` | body `{ "refresh_token": "..." }` |
+| Log out | no body, `credentials: "include"` | body `{ "refresh_token": "..." }` |
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "expires_in": 900,
+  "refresh_token": "kq3V0m...",
+  "refresh_expires_in": 2592000
+}
+```
+
+- **Save the new refresh token from every refresh response** before doing anything else. The old one stops working (rotation), exactly like the cookie.
+- When a refresh body is sent, any cookie is ignored and no cookie is set.
+- A cookie refresh never returns the token in the body, so a script on the website can't read the refresh token.
+- Never put the refresh token in `localStorage` — use secure storage.
+
 ## Conventions for the endpoints below
 
 - **Everything requires an access token** (`Authorization: Bearer ...`) — use `apiFetch` from [Refresh](#refresh). Without one you get **401**.
@@ -442,11 +469,80 @@ async function uploadImage(file: File) {
   "id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26",
   "width": 1080,
   "height": 1350,
-  "url": "http://localhost:8000/media/images/8df1d765e86743a79b11fd7d9cfd908d.webp"
+  "url": "http://localhost:8000/media/images/8df1d765e86743a79b11fd7d9cfd908d.webp",
+  "generated": false
 }
 ```
 
 **Every image object** in the API has this shape. Use `width`/`height` to reserve space before the image loads (`aspect-ratio: width / height`) so the feed doesn't jump.
+
+`generated` is `true` for AI-generated images ([try-on](#virtual-try-on) results). **Label these in the UI** (e.g. an "AI try-on" badge), including in the feed when someone posts one.
+
+---
+
+## Virtual try-on
+
+### Generate a try-on
+
+`POST /tryons` 🔒
+
+Puts the outfit from one photo onto a photo of you, using a Google image model.
+
+1. Upload both photos with [Upload an image](#upload-an-image): a photo of yourself and a photo of the outfit (on its own, or worn by someone).
+2. Call this endpoint with both ids. **It takes a while, often 10–30 seconds**: show progress, and don't time out the request early.
+3. To post the result, [create a fit](#post-a-fit) with `result_image.id` in `image_ids`.
+
+| Field | Required | Rules |
+|---|---|---|
+| `person_image_id` | yes | An image you uploaded. A clear photo of one person works best, ideally full-body. |
+| `outfit_image_id` | yes | An image you uploaded. |
+
+```json
+{
+  "person_image_id": "517830fe-d102-41c1-84b5-f7036e814611",
+  "outfit_image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26"
+}
+```
+
+**Response** `201`:
+
+```json
+{
+  "id": "0d5a3c4e-6f62-4bb1-9b0e-2f1c8d7a9e10",
+  "result_image": { "id": "...", "width": 1024, "height": 1536, "url": "http://localhost:8000/media/images/....webp", "generated": true },
+  "person_image": { "id": "517830fe-...", "width": 1080, "height": 1350, "url": "...", "generated": false },
+  "outfit_image": { "id": "16cc86b0-...", "width": 1080, "height": 1350, "url": "...", "generated": false },
+  "model": "gemini-3.1-flash-image",
+  "created_at": "2026-10-21T01:20:00.000000Z"
+}
+```
+
+- `result_image` is a new image **you own**, like an upload. It isn't posted anywhere until you create a fit with it.
+- `person_image` / `outfit_image` are `null` if those images were deleted later.
+
+**Responses:**
+
+| Status | `detail` | What to do |
+|---|---|---|
+| `400` | `"Image not found"` | An id doesn't exist or isn't yours. |
+| `422` | `"We couldn't create a try-on from these photos"` | The model refused the photos (safety filters) or didn't return an image. Suggest different photos. |
+| `429` | `"You've reached today's try-on limit. Try again tomorrow."` | Each user can make a limited number per 24 hours (default 20). |
+| `503` | `"Try-on is temporarily unavailable"`, `"Try-on is busy right now..."` or `"Try-on isn't set up on this server"` | Show the message and let the user retry later. |
+
+Failed try-ons (`422`, `503`) don't count toward the daily limit.
+
+```ts
+const res = await apiFetch("/tryons", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ person_image_id: personId, outfit_image_id: outfitId }),
+});
+if (res.status === 201) {
+  const tryon = await res.json(); // show tryon.result_image.url
+} else {
+  const { detail } = await res.json(); // see the table above
+}
+```
 
 ---
 

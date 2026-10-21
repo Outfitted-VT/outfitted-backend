@@ -10,6 +10,8 @@ from app.core.config import settings
 class Storage(Protocol):
     def save(self, key: str, data: bytes, content_type: str) -> None: ...
 
+    def read(self, key: str) -> bytes: ...
+
     def delete(self, key: str) -> None: ...
 
 
@@ -23,6 +25,9 @@ class LocalStorage:
         path = self.root / key
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
+
+    def read(self, key: str) -> bytes:
+        return (self.root / key).read_bytes()
 
     def delete(self, key: str) -> None:
         (self.root / key).unlink(missing_ok=True)
