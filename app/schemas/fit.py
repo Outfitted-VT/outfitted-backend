@@ -1,6 +1,6 @@
 import uuid
 from enum import StrEnum
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import (
     AfterValidator,
@@ -17,6 +17,7 @@ from app.schemas.user import OptionalText, UserSummary, UtcDatetime
 
 MAX_IMAGES_PER_FIT = 10
 MAX_ITEMS_PER_FIT = 30
+MAX_TAGS_PER_KIND = 10
 
 
 class ItemCategory(StrEnum):
@@ -44,13 +45,25 @@ class ItemPin(BaseModel):
     y: float = Field(ge=0, le=1)
 
 
+ItemSource = Literal["user", "detected"]
+ShortText = Annotated[str | None, Field(max_length=50), OptionalText]
+
+
 class FitItemIn(BaseModel):
     category: ItemCategory
     name: Annotated[str, AfterValidator(_strip), Field(min_length=1, max_length=100)]
     brand: Annotated[str | None, Field(max_length=100), OptionalText] = None
-    color: Annotated[str | None, Field(max_length=50), OptionalText] = None
+    color: ShortText = None
+    pattern: ShortText = None
+    material: ShortText = None
+    silhouette: ShortText = Field(default=None, description='How it fits, e.g. "oversized".')
     url: HttpUrl | None = Field(default=None, description="Where to buy it.")
     pin: ItemPin | None = None
+    source: ItemSource = Field(
+        default="user",
+        description='"detected" for items from `POST /detections` (keep it when the user edits '
+        'one), "user" for items a person entered.',
+    )
 
 
 class FitItemRead(BaseModel):
@@ -59,8 +72,12 @@ class FitItemRead(BaseModel):
     name: str
     brand: str | None
     color: str | None
+    pattern: str | None
+    material: str | None
+    silhouette: str | None
     url: str | None
     pin: ItemPin | None
+    source: ItemSource
 
     @classmethod
     def from_model(cls, item) -> "FitItemRead":
@@ -73,13 +90,29 @@ class FitItemRead(BaseModel):
             name=item.name,
             brand=item.brand,
             color=item.color,
+            pattern=item.pattern,
+            material=item.material,
+            silhouette=item.silhouette,
             url=item.url,
             pin=pin,
+            source=item.source,
         )
 
 
 Caption = Annotated[str | None, Field(max_length=2200), OptionalText]
 Items = Annotated[list[FitItemIn], Field(max_length=MAX_ITEMS_PER_FIT)]
+
+
+def _normalize_tag(value: str) -> str:
+    return " ".join(value.split()).lower()
+
+
+def _dedupe(tags: list[str]) -> list[str]:
+    return list(dict.fromkeys(tags))
+
+
+Tag = Annotated[str, AfterValidator(_normalize_tag), Field(min_length=1, max_length=30)]
+Tags = Annotated[list[Tag], Field(max_length=MAX_TAGS_PER_KIND), AfterValidator(_dedupe)]
 
 
 def _check_pins(items: list[FitItemIn], image_ids: set[uuid.UUID]) -> None:
@@ -96,6 +129,8 @@ class FitCreate(BaseModel):
     )
     caption: Caption = None
     items: Items = []
+    occasion_tags: Tags = Field(default=[], description='Where to wear it, e.g. "date night".')
+    style_tags: Tags = Field(default=[], description='The style, e.g. "streetwear".')
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -140,13 +175,15 @@ class FitUpdate(BaseModel):
 
     caption: Caption = None
     items: Items | None = Field(default=None, description="Replaces all items when sent.")
+    occasion_tags: Tags | None = Field(default=None, description="Replaces them when sent.")
+    style_tags: Tags | None = Field(default=None, description="Replaces them when sent.")
 
-    @field_validator("items")
+    @field_validator("items", "occasion_tags", "style_tags")
     @classmethod
-    def items_not_null(cls, items: list[FitItemIn] | None) -> list[FitItemIn]:
-        if items is None:
-            raise ValueError("Send an empty list to remove all items")
-        return items
+    def lists_not_null(cls, values: list | None) -> list:
+        if values is None:
+            raise ValueError("Send an empty list to remove them all")
+        return values
 
 
 class FitRead(BaseModel):
@@ -155,6 +192,8 @@ class FitRead(BaseModel):
     caption: str | None
     images: list[ImageRead]
     items: list[FitItemRead]
+    occasion_tags: list[str]
+    style_tags: list[str]
     like_count: int
     liked_by_me: bool
     saved_by_me: bool
@@ -169,6 +208,8 @@ class FitRead(BaseModel):
             caption=fit.caption,
             images=[ImageRead.model_validate(image) for image in fit.images],
             items=[FitItemRead.from_model(item) for item in fit.items],
+            occasion_tags=fit.occasion_tags,
+            style_tags=fit.style_tags,
             like_count=view.like_count,
             liked_by_me=view.liked_by_me,
             saved_by_me=view.saved_by_me,

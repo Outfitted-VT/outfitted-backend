@@ -577,8 +577,12 @@ Every endpoint that returns fits uses this shape:
       "name": "Oversized denim jacket",
       "brand": "Levi's",
       "color": "light wash",
+      "pattern": null,
+      "material": "denim",
+      "silhouette": "oversized",
       "url": "https://example.com/jacket",
-      "pin": { "image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26", "x": 0.42, "y": 0.31 }
+      "pin": { "image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26", "x": 0.42, "y": 0.31 },
+      "source": "detected"
     },
     {
       "id": "6adccd1d-9975-4379-aef6-b8d71d852949",
@@ -586,10 +590,16 @@ Every endpoint that returns fits uses this shape:
       "name": "Sambas",
       "brand": "adidas",
       "color": null,
+      "pattern": null,
+      "material": null,
+      "silhouette": null,
       "url": null,
-      "pin": null
+      "pin": null,
+      "source": "user"
     }
   ],
+  "occasion_tags": ["casual", "weekend"],
+  "style_tags": ["streetwear"],
   "like_count": 1,
   "liked_by_me": true,
   "saved_by_me": false,
@@ -601,21 +611,26 @@ Every endpoint that returns fits uses this shape:
 - `liked_by_me` / `saved_by_me` are for **the current user**.
 - **Item pins:** `x` and `y` are fractions (0–1) of the image's width and height, measured from the top-left. To draw a pin, position it at `left: x * 100%; top: y * 100%` over the image named by `pin.image_id`. Items without a pin have `pin: null`.
 - **Categories:** `top`, `bottom`, `dress`, `outerwear`, `shoes`, `bag`, `accessory`, `jewelry`, `headwear`, `other`.
+- **Item `source`:** `"detected"` if the item came from [Detect the pieces in a photo](#detect-the-pieces-in-a-photo), `"user"` if a person entered it.
+- **Tags:** `occasion_tags` (where you'd wear it) and `style_tags` (the look), lowercase.
 
 ### Post a fit
 
 `POST /fits` 🔒
 
 1. Upload each photo with [Upload an image](#upload-an-image).
-2. Post the fit with the image ids:
+2. Optional: [detect the pieces](#detect-the-pieces-in-a-photo) in the cover photo and show them as editable suggestions.
+3. Post the fit with the image ids:
 
 | Field | Required | Rules |
 |---|---|---|
 | `image_ids` | yes | 1–10 ids from `POST /images`, in display order, no duplicates. Must be **your** images, and **each image can only be in one fit**. |
 | `caption` | no | Up to 2200 characters. |
 | `items` | no | Up to 30. See below. |
+| `occasion_tags` | no | Up to 10, each 1–30 characters. Stored lowercase; duplicates are dropped. |
+| `style_tags` | no | Same rules. |
 
-**Item fields:** `category` (required, one of the categories above), `name` (required, 1–100 chars), `brand` (≤100), `color` (≤50), `url` (a valid `http(s)` link), `pin` (`{ image_id, x, y }` where `image_id` is one of this fit's `image_ids` and `x`/`y` are 0–1).
+**Item fields:** `category` (required, one of the categories above), `name` (required, 1–100 chars), `brand` (≤100), `color`, `pattern`, `material`, `silhouette` (each ≤50), `url` (a valid `http(s)` link), `pin` (`{ image_id, x, y }` where `image_id` is one of this fit's `image_ids` and `x`/`y` are 0–1), `source` (`"user"`, the default, or `"detected"`; keep `"detected"` when the user edits a detected item).
 
 ```json
 {
@@ -637,6 +652,60 @@ Every endpoint that returns fits uses this shape:
 
 **Responses:** `201` with [the fit object](#the-fit-object) · `400` `{"detail": "Image not found"}` (an id isn't yours or doesn't exist) · `409` `{"detail": "Image is already used in another fit"}` · `422` validation (bad category, pin pointing at an image not in `image_ids`, too many images, …).
 
+### Detect the pieces in a photo
+
+`POST /detections` 🔒
+
+Suggests the clothing pieces and occasion/style tags in one of your photos, so people don't have to tag them by hand. Takes a few seconds: call it right after uploading the cover photo (or right after a [try-on](#virtual-try-on), with `result_image.id`), while the user writes the caption.
+
+```json
+{ "image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26" }
+```
+
+**Response** `200`:
+
+```json
+{
+  "image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26",
+  "items": [
+    {
+      "category": "top",
+      "name": "ribbed tank top",
+      "brand": null,
+      "color": "black",
+      "pattern": null,
+      "material": "ribbed cotton",
+      "silhouette": "fitted",
+      "url": null,
+      "pin": { "image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26", "x": 0.508, "y": 0.501 },
+      "source": "detected"
+    },
+    {
+      "category": "bottom",
+      "name": "drawstring sweat shorts",
+      "brand": null,
+      "color": "light blue",
+      "pattern": null,
+      "material": "cotton",
+      "silhouette": "relaxed",
+      "url": null,
+      "pin": { "image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26", "x": 0.509, "y": 0.8515 },
+      "source": "detected"
+    }
+  ],
+  "occasion_tags": ["casual", "gym"],
+  "style_tags": ["minimalist", "sporty"],
+  "model": "gemini-3.1-flash-lite"
+}
+```
+
+- `items` are already in the shape [Post a fit](#post-a-fit) accepts. Show them as editable suggestions, then send the ones the user keeps, plus the tags, in `POST /fits`.
+- `pin` marks where the piece is on this image (`null` if the model didn't locate it). Brands are never guessed.
+- The result is stored per image: asking again for the same image returns it instantly.
+- A photo the model won't process returns empty lists, not an error.
+
+**Responses:** `200` ↑ · `400` `{"detail": "Image not found"}` · `429` daily limit reached (default 200 new images per day) · `503` `{"detail": "Piece detection is temporarily unavailable"}` or `"Piece detection isn't set up on this server"`: let the user tag pieces by hand.
+
 ### Get a fit
 
 `GET /fits/{fit_id}` 🔒 → [the fit object](#the-fit-object), or `404` `{"detail": "Fit not found"}`.
@@ -645,7 +714,7 @@ Every endpoint that returns fits uses this shape:
 
 `PATCH /fits/{fit_id}` 🔒
 
-Send `caption` and/or `items`. Omitted fields stay the same. **`items` replaces the whole list** — send every item you want to keep (send `[]` to remove all). Photos can't be changed after posting.
+Send any of `caption`, `items`, `occasion_tags`, `style_tags`. Omitted fields stay the same. **Lists replace the whole list**: send every item or tag you want to keep (send `[]` to remove all). Photos can't be changed after posting.
 
 **Responses:** `200` with the updated fit · `400` `{"detail": "Each item pin must reference one of the fit's images"}` · `403` `{"detail": "You can only change your own fits"}` · `404`.
 

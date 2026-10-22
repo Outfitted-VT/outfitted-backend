@@ -1,8 +1,9 @@
 # Import every model here so Base.metadata knows about it.
 # Alembic imports this package to autogenerate migrations.
 from app.db.base import Base
+from app.models.detection import ImageDetection
 from app.models.engagement import FitLike, FitSave
-from app.models.fit import Fit, FitImage, FitItem
+from app.models.fit import Fit, FitImage, FitItem, FitTag
 from app.models.follow import Follow
 from app.models.image import Image
 from app.models.refresh_token import RefreshToken
@@ -16,8 +17,10 @@ __all__ = [
     "FitItem",
     "FitLike",
     "FitSave",
+    "FitTag",
     "Follow",
     "Image",
+    "ImageDetection",
     "RefreshToken",
     "TryOn",
     "User",

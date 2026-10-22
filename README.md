@@ -21,15 +21,15 @@ fastapi dev app/main.py
 - Docs: http://localhost:8000/docs
 - Frontend guide: [docs/API.md](docs/API.md)
 
-## Virtual try-on
+## Virtual try-on and piece detection
 
-`POST /tryons` generates images with a Google model on Gemini Enterprise Agent Platform (previously Vertex AI). It returns 503 until it's set up:
+`POST /tryons` generates images, and `POST /detections` suggests the clothing pieces in a photo, with Google models on Gemini Enterprise Agent Platform (previously Vertex AI). Both return 503 until it's set up:
 
 1. A Google Cloud project with billing enabled and the Agent Platform API (`aiplatform.googleapis.com`) turned on.
 2. Credentials. Locally, install the gcloud CLI and run `gcloud auth application-default login`. On a server, run as a service account with the **Vertex AI User** role (`roles/aiplatform.user`).
-3. `GOOGLE_CLOUD_PROJECT=<project id>` in `.env`. Optionally `TRYON_MODEL` (default `gemini-3.1-flash-image`) and `TRYON_DAILY_LIMIT` — see `.env.example`.
+3. `GOOGLE_CLOUD_PROJECT=<project id>` in `.env`. Optionally the models and daily limits (`TRYON_MODEL`, `DETECTION_MODEL`, …) — see `.env.example`.
 
-Every try-on is a paid request. Tests use a fake generator and never call Google.
+Every try-on and detection is a paid request (detections are cached per image). Tests use fakes and never call Google.
 
 ## Database migrations
 
@@ -60,6 +60,7 @@ app/
 │   └── pagination.py    # Opaque cursors for newest-first lists
 ├── storage.py           # File storage interface (local disk now, S3/R2 later)
 ├── tryon.py             # Try-on image generation interface (Google models)
+├── garments.py          # Clothing piece detection interface (Gemini)
 ├── db/                  # SQLAlchemy Base, engine/session, shared mixins
 ├── models/              # SQLAlchemy models (database tables)
 ├── repositories/        # Database queries, one module per model

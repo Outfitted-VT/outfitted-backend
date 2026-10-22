@@ -30,10 +30,24 @@ class Fit(TimestampMixin, Base):
     items: Mapped[list["FitItem"]] = relationship(
         order_by="FitItem.position", cascade="all, delete-orphan"
     )
+    tags: Mapped[list["FitTag"]] = relationship(
+        order_by="FitTag.position", cascade="all, delete-orphan"
+    )
 
     @property
     def images(self) -> list[Image]:
         return [fit_image.image for fit_image in self.fit_images]
+
+    def tags_of(self, kind: str) -> list[str]:
+        return [tag.tag for tag in self.tags if tag.kind == kind]
+
+    @property
+    def occasion_tags(self) -> list[str]:
+        return self.tags_of("occasion")
+
+    @property
+    def style_tags(self) -> list[str]:
+        return self.tags_of("style")
 
 
 class FitImage(Base):
@@ -64,10 +78,32 @@ class FitItem(Base):
     name: Mapped[str] = mapped_column(String(100))
     brand: Mapped[str | None] = mapped_column(String(100))
     color: Mapped[str | None] = mapped_column(String(50))
+    pattern: Mapped[str | None] = mapped_column(String(50))
+    material: Mapped[str | None] = mapped_column(String(50))
+    # How it fits, e.g. "oversized" or "slim".
+    silhouette: Mapped[str | None] = mapped_column(String(50))
     url: Mapped[str | None] = mapped_column(String(2048))
+    # "detected" if it came from POST /detections, "user" if a person entered it. Kept as-is
+    # when the user edits a detected item, so it records where the item came from.
+    source: Mapped[str] = mapped_column(String(10), default="user", server_default="user")
     # Pin position as fractions of the photo's width/height (0-1), so it survives resizing.
     pin_image_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("images.id", ondelete="SET NULL")
     )
     pin_x: Mapped[float | None] = mapped_column(Float)
     pin_y: Mapped[float | None] = mapped_column(Float)
+
+
+class FitTag(Base):
+    """An occasion ("date night") or style ("streetwear") tag on a fit, stored lowercase."""
+
+    __tablename__ = "fit_tags"
+    # Finding fits by tag, e.g. every "streetwear" fit.
+    __table_args__ = (Index("ix_fit_tags_kind_tag", "kind", "tag"),)
+
+    fit_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("fits.id", ondelete="CASCADE"), primary_key=True
+    )
+    kind: Mapped[str] = mapped_column(String(10), primary_key=True)  # "occasion" or "style"
+    tag: Mapped[str] = mapped_column(String(30), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer)

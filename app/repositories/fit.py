@@ -13,7 +13,10 @@ from app.models.user import User
 def with_details(statement: Select) -> Select:
     # Load everything a FitRead needs up front, avoiding one query per fit (N+1).
     return statement.options(
-        selectinload(Fit.author), selectinload(Fit.fit_images), selectinload(Fit.items)
+        selectinload(Fit.author),
+        selectinload(Fit.fit_images),
+        selectinload(Fit.items),
+        selectinload(Fit.tags),
     )
 
 

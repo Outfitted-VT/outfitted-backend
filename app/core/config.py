@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     TRYON_DAILY_LIMIT: int = 20
     TRYON_TIMEOUT_SECONDS: int = 120
 
+    # Detecting the clothing pieces in a photo (POST /detections), with a Gemini model that
+    # reads images. Uses the same project and credentials as try-on.
+    DETECTION_MODEL: str = "gemini-3.1-flash-lite"
+    DETECTION_LOCATION: str = "global"
+    # Detections are cheap but still paid; repeat requests for the same image are cached.
+    DETECTION_DAILY_LIMIT: int = 200
+    DETECTION_TIMEOUT_SECONDS: int = 60
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
     @field_validator("DATABASE_URL")
