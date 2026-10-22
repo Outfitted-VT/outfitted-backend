@@ -44,6 +44,26 @@ class Settings(BaseSettings):
     TRYON_DAILY_LIMIT: int = 20
     TRYON_TIMEOUT_SECONDS: int = 120
 
+    # Detecting the clothing pieces in a photo (POST /detections), with a Gemini model that
+    # reads images. Uses the same project and credentials as try-on.
+    DETECTION_MODEL: str = "gemini-3.1-flash-lite"
+    DETECTION_LOCATION: str = "global"
+    # Detections are cheap but still paid; repeat requests for the same image are cached.
+    DETECTION_DAILY_LIMIT: int = 200
+    DETECTION_TIMEOUT_SECONDS: int = 60
+
+    # Shop links for detected pieces: each piece is cropped and run through Google Lens visual
+    # search via SerpApi (serpapi.com). Off until SERPAPI_API_KEY is set; pieces then just have
+    # no link. Each piece is one paid search, so cap how many per photo.
+    SERPAPI_API_KEY: str | None = None
+    SHOP_MATCH_COUNTRY: str = "us"
+    SHOP_MATCH_LANGUAGE: str = "en"
+    # Matches priced in this currency rank first; others (e.g. a Japanese store) rank last.
+    SHOP_MATCH_CURRENCY: str = "$"
+    SHOP_MATCHES_PER_ITEM: int = 3
+    SHOP_MATCH_MAX_ITEMS: int = 6
+    SHOP_MATCH_TIMEOUT_SECONDS: int = 30
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
     @field_validator("DATABASE_URL")

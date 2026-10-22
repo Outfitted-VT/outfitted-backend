@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.pagination import decode_cursor, encode_cursor
-from app.models.fit import Fit, FitImage, FitItem
+from app.models.fit import Fit, FitImage, FitItem, FitTag
 from app.models.user import User
 from app.repositories import engagement as engagement_repository
 from app.repositories import fit as fit_repository
@@ -89,12 +89,24 @@ def _build_items(items: list[FitItemIn]) -> list[FitItem]:
             name=item.name,
             brand=item.brand,
             color=item.color,
+            pattern=item.pattern,
+            material=item.material,
+            silhouette=item.silhouette,
             url=str(item.url) if item.url else None,
             pin_image_id=item.pin.image_id if item.pin else None,
             pin_x=item.pin.x if item.pin else None,
             pin_y=item.pin.y if item.pin else None,
+            source=item.source,
         )
         for position, item in enumerate(items)
+    ]
+
+
+def _build_tags(occasion_tags: list[str], style_tags: list[str]) -> list[FitTag]:
+    return [
+        FitTag(kind=kind, tag=tag, position=position)
+        for kind, tags in (("occasion", occasion_tags), ("style", style_tags))
+        for position, tag in enumerate(tags)
     ]
 
 
@@ -124,6 +136,7 @@ def create_fit(db: Session, author: User, data: FitCreate) -> Fit:
         caption=data.caption,
         fit_images=[FitImage(image=image, position=i) for i, image in enumerate(images)],
         items=_build_items(data.items),
+        tags=_build_tags(data.occasion_tags, data.style_tags),
     )
     try:
         fit_repository.add(db, fit)
@@ -150,6 +163,13 @@ def update_fit(db: Session, editor: User, fit_id: uuid.UUID, changes: FitUpdate)
         if any(item.pin and item.pin.image_id not in image_ids for item in changes.items):
             raise InvalidItemPinError
         fit.items = _build_items(changes.items)
+    if fields & {"occasion_tags", "style_tags"}:
+        occasion = changes.occasion_tags if "occasion_tags" in fields else fit.occasion_tags
+        style = changes.style_tags if "style_tags" in fields else fit.style_tags
+        # Flush the removal first: the new rows can reuse the same (fit, kind, tag) keys.
+        fit.tags = []
+        db.flush()
+        fit.tags = _build_tags(occasion, style)
 
     db.commit()
     return fit_repository.get(db, fit.id)

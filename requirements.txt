@@ -7,3 +7,4 @@ pwdlib[argon2]>=0.2
 pyjwt>=2.9
 pillow>=11.0
 google-genai>=2.32
+serpapi>=1.1.2
