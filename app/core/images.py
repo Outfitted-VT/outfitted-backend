@@ -74,3 +74,22 @@ def to_jpeg(data: bytes) -> bytes:
     output = io.BytesIO()
     image.save(output, format="JPEG", quality=90)
     return output.getvalue()
+
+
+def crop_jpeg(jpeg: bytes, box: list[int], *, padding: float = 0.08, max_side: int = 800) -> bytes:
+    """Crop a JPEG to a [ymin, xmin, ymax, xmax] box scaled 0-1000, with some padding around it.
+
+    Used to search for one piece of an outfit. The result is small (well under 500 KB).
+    """
+    image = Image.open(io.BytesIO(jpeg)).convert("RGB")
+    ymin, xmin, ymax, xmax = (min(max(v, 0), 1000) / 1000 for v in box)
+    pad_y, pad_x = (ymax - ymin) * padding, (xmax - xmin) * padding
+    left = max(0, int((xmin - pad_x) * image.width))
+    top = max(0, int((ymin - pad_y) * image.height))
+    right = min(image.width, int((xmax + pad_x) * image.width))
+    bottom = min(image.height, int((ymax + pad_y) * image.height))
+    crop = image.crop((left, top, right, bottom))
+    crop.thumbnail((max_side, max_side))
+    output = io.BytesIO()
+    crop.save(output, format="JPEG", quality=85)
+    return output.getvalue()

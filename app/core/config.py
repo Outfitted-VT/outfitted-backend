@@ -52,6 +52,18 @@ class Settings(BaseSettings):
     DETECTION_DAILY_LIMIT: int = 200
     DETECTION_TIMEOUT_SECONDS: int = 60
 
+    # Shop links for detected pieces: each piece is cropped and run through Google Lens visual
+    # search via SerpApi (serpapi.com). Off until SERPAPI_API_KEY is set; pieces then just have
+    # no link. Each piece is one paid search, so cap how many per photo.
+    SERPAPI_API_KEY: str | None = None
+    SHOP_MATCH_COUNTRY: str = "us"
+    SHOP_MATCH_LANGUAGE: str = "en"
+    # Matches priced in this currency rank first; others (e.g. a Japanese store) rank last.
+    SHOP_MATCH_CURRENCY: str = "$"
+    SHOP_MATCHES_PER_ITEM: int = 3
+    SHOP_MATCH_MAX_ITEMS: int = 6
+    SHOP_MATCH_TIMEOUT_SECONDS: int = 30
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
     @field_validator("DATABASE_URL")

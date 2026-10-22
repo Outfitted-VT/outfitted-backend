@@ -31,6 +31,8 @@ fastapi dev app/main.py
 
 Every try-on and detection is a paid request (detections are cached per image). Tests use fakes and never call Google.
 
+Shop links for detected pieces come from Google Lens visual search via [SerpApi](https://serpapi.com). Set `SERPAPI_API_KEY` in `.env` to turn them on; without it, detected pieces just have no link. Each located piece is one paid SerpApi search.
+
 ## Database migrations
 
 Models live in `app/models/`. After adding or changing a model (and importing it in `app/models/__init__.py`):
@@ -61,6 +63,7 @@ app/
 ├── storage.py           # File storage interface (local disk now, S3/R2 later)
 ├── tryon.py             # Try-on image generation interface (Google models)
 ├── garments.py          # Clothing piece detection interface (Gemini)
+├── shopping.py          # Similar-product search interface (Google Lens via SerpApi)
 ├── db/                  # SQLAlchemy Base, engine/session, shared mixins
 ├── models/              # SQLAlchemy models (database tables)
 ├── repositories/        # Database queries, one module per model

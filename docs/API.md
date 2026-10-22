@@ -656,7 +656,7 @@ Every endpoint that returns fits uses this shape:
 
 `POST /detections` 🔒
 
-Suggests the clothing pieces and occasion/style tags in one of your photos, so people don't have to tag them by hand. Takes a few seconds: call it right after uploading the cover photo (or right after a [try-on](#virtual-try-on), with `result_image.id`), while the user writes the caption.
+Suggests the clothing pieces, occasion/style tags, and shop links in one of your photos, so people don't have to tag them by hand. Takes a few seconds (longer with shop links): call it right after uploading the cover photo (or right after a [try-on](#virtual-try-on), with `result_image.id`), while the user writes the caption.
 
 ```json
 { "image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26" }
@@ -676,9 +676,25 @@ Suggests the clothing pieces and occasion/style tags in one of your photos, so p
       "pattern": null,
       "material": "ribbed cotton",
       "silhouette": "fitted",
-      "url": null,
+      "url": "https://shop.example.com/ribbed-tank-black",
       "pin": { "image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26", "x": 0.508, "y": 0.501 },
-      "source": "detected"
+      "source": "detected",
+      "matches": [
+        {
+          "title": "Ribbed Tank Top - Black",
+          "link": "https://shop.example.com/ribbed-tank-black",
+          "source": "Example Shop",
+          "thumbnail": "https://images.example.com/tank.jpg",
+          "price": "$19.99"
+        },
+        {
+          "title": "Men's Rib Knit Tank",
+          "link": "https://store.example.org/rib-tank",
+          "source": "Example Store",
+          "thumbnail": "https://images.example.org/rib-tank.jpg",
+          "price": null
+        }
+      ]
     },
     {
       "category": "bottom",
@@ -690,7 +706,8 @@ Suggests the clothing pieces and occasion/style tags in one of your photos, so p
       "silhouette": "relaxed",
       "url": null,
       "pin": { "image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26", "x": 0.509, "y": 0.8515 },
-      "source": "detected"
+      "source": "detected",
+      "matches": []
     }
   ],
   "occasion_tags": ["casual", "gym"],
@@ -701,6 +718,8 @@ Suggests the clothing pieces and occasion/style tags in one of your photos, so p
 
 - `items` are already in the shape [Post a fit](#post-a-fit) accepts. Show them as editable suggestions, then send the ones the user keeps, plus the tags, in `POST /fits`.
 - `pin` marks where the piece is on this image (`null` if the model didn't locate it). Brands are never guessed.
+- **Shop links:** each located piece is looked up with Google Lens visual search. `matches` are products that look like it (up to 3, ones with a price first), and `url` is set to the best one. Let the user pick another match (set `url` to its `link`) or remove the link. `matches` is empty, and `url` is `null`, when nothing was found, the piece wasn't located, or shop matching isn't set up. `POST /fits` ignores `matches`.
+- Matches look similar; they aren't guaranteed to be the exact same product. Label them as "similar", not "the one in the photo".
 - The result is stored per image: asking again for the same image returns it instantly.
 - A photo the model won't process returns empty lists, not an error.
 

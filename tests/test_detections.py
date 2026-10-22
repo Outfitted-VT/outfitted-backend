@@ -14,6 +14,7 @@ from app.garments import (
     get_garment_detector,
 )
 from app.main import app
+from app.shopping import NoProductFinder, get_product_finder
 from tests.conftest import AuthedUser
 
 DETECTIONS_URL = "/api/v1/detections"
@@ -49,6 +50,12 @@ def use_detector(fake: FakeDetector) -> FakeDetector:
 @pytest.fixture
 def detector(client: TestClient) -> FakeDetector:
     return use_detector(FakeDetector())
+
+
+@pytest.fixture(autouse=True)
+def no_shop_matching(client: TestClient) -> None:
+    # Never make real (paid) SerpApi searches from tests, even if a key is in .env.
+    app.dependency_overrides[get_product_finder] = lambda: NoProductFinder()
 
 
 def detect(client: TestClient, user: AuthedUser, image_id: str):
@@ -88,6 +95,7 @@ def test_detection_suggests_items_and_tags(
         # The center of the box [ymin=200, xmin=300, ymax=600, xmax=700] out of 1000.
         "pin": {"image_id": image_id, "x": 0.5, "y": 0.4},
         "source": "detected",
+        "matches": [],
     }
     assert shorts["pin"] is None
     assert shorts["source"] == "detected"
