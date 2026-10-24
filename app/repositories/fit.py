@@ -50,20 +50,32 @@ def list_newest(
     user_id: uuid.UUID | None = None,
     user_ids=None,
     include_user_id: uuid.UUID | None = None,
+    viewer_id: uuid.UUID | None = None,
+    public_only: bool = False,
 ) -> list[Fit]:
     """Fits by active users, newest first. Returns up to `limit` rows.
 
-    Filter by one author (`user_id`), or by a subquery of authors (`user_ids`) plus
-    optionally one more author (`include_user_id`).
+    Enforces Closet Privacy Tiers:
+    - Explore feed (public_only=True): public fits only.
+    - Other users' profiles: public and close_friends (vault excluded).
+    - Own profile: all fits including vault drafts.
     """
     statement = select(Fit).join(Fit.author).where(User.is_active)
-    if user_id is not None:
+
+    if public_only:
+        statement = statement.where(Fit.privacy_tier == "public")
+    elif user_id is not None:
         statement = statement.where(Fit.user_id == user_id)
-    if user_ids is not None:
+        if viewer_id != user_id:
+            statement = statement.where(Fit.privacy_tier != "vault")
+    elif user_ids is not None:
         authors = Fit.user_id.in_(user_ids)
         if include_user_id is not None:
             authors = or_(authors, Fit.user_id == include_user_id)
         statement = statement.where(authors)
+        # In following feed, exclude vault drafts
+        statement = statement.where(Fit.privacy_tier != "vault")
+
     if cursor is not None:
         statement = statement.where(
             or_(

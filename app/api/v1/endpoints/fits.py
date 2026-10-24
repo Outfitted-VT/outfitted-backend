@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, PageCursor, PageLimit, SessionDep, StorageDep
 from app.core.pagination import InvalidCursorError
 from app.schemas.error import ErrorResponse
-from app.schemas.fit import FitCreate, FitRead, FitUpdate
+from app.schemas.fit import FitCreate, FitPrivacyUpdate, FitRead, FitUpdate
 from app.schemas.pagination import Page
 from app.services import engagement as engagement_service
 from app.services import follow as follow_service
@@ -20,6 +20,7 @@ from app.services.fit import (
     get_fit,
     list_fits,
     update_fit,
+    update_fit_privacy,
 )
 from app.services.image import ImageNotFoundError
 
@@ -168,6 +169,29 @@ def remove_fit(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="You can only change your own fits"
         ) from None
+
+
+@router.patch(
+    "/{fit_id}/privacy",
+    response_model=FitRead,
+    summary="Update fit closet privacy tier and peer try-on settings",
+    responses={**FIT_NOT_FOUND, **NOT_OWNER},
+)
+def edit_fit_privacy(
+    fit_id: uuid.UUID, changes: FitPrivacyUpdate, current_user: CurrentUser, db: SessionDep
+) -> FitRead:
+    """Change privacy tier (public, close_friends, vault) or allow_friend_try_on."""
+    try:
+        fit = update_fit_privacy(
+            db, current_user, fit_id, changes.privacy_tier, changes.allow_friend_try_on
+        )
+    except FitNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fit not found") from None
+    except NotFitOwnerError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="You can only change your own fits"
+        ) from None
+    return FitRead.from_view(describe_fit(db, current_user, fit))
 
 
 def _engagement_route(action, fit_id: uuid.UUID, current_user, db) -> None:

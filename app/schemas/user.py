@@ -133,3 +133,19 @@ class ProfileRead(UserSummary):
             is_following=view.is_following,
             created_at=user.created_at,
         )
+
+
+class UserPrivacySettingsRead(BaseModel):
+    avatar_mode: str = 'photorealistic'
+    mannequin_tone: str = 'neutral_onyx'
+    hide_facial_features: bool = False
+    default_closet_privacy: str = 'public'
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserPrivacySettingsUpdate(BaseModel):
+    avatar_mode: str | None = None
+    mannequin_tone: str | None = None
+    hide_facial_features: bool | None = None
+    default_closet_privacy: str | None = None

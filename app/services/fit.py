@@ -134,6 +134,8 @@ def create_fit(db: Session, author: User, data: FitCreate) -> Fit:
     fit = Fit(
         user_id=author.id,
         caption=data.caption,
+        privacy_tier=getattr(data, "privacy_tier", "public"),
+        allow_friend_try_on=getattr(data, "allow_friend_try_on", True),
         fit_images=[FitImage(image=image, position=i) for i, image in enumerate(images)],
         items=_build_items(data.items),
         tags=_build_tags(data.occasion_tags, data.style_tags),
@@ -170,7 +172,23 @@ def update_fit(db: Session, editor: User, fit_id: uuid.UUID, changes: FitUpdate)
         fit.tags = []
         db.flush()
         fit.tags = _build_tags(occasion, style)
+    if "privacy_tier" in fields and changes.privacy_tier is not None:
+        fit.privacy_tier = changes.privacy_tier
+    if "allow_friend_try_on" in fields and changes.allow_friend_try_on is not None:
+        fit.allow_friend_try_on = changes.allow_friend_try_on
 
+    db.commit()
+    return fit_repository.get(db, fit.id)
+
+
+def update_fit_privacy(
+    db: Session, editor: User, fit_id: uuid.UUID, privacy_tier: str | None, allow_friend_try_on: bool | None
+) -> Fit:
+    fit = _get_own_fit(db, editor, fit_id)
+    if privacy_tier is not None:
+        fit.privacy_tier = privacy_tier
+    if allow_friend_try_on is not None:
+        fit.allow_friend_try_on = allow_friend_try_on
     db.commit()
     return fit_repository.get(db, fit.id)
 
@@ -196,6 +214,11 @@ def list_fits(
     decoded = decode_cursor(cursor) if cursor else None
     # Fetch one extra row to know whether there's another page.
     fits = fit_repository.list_newest(
-        db, limit=limit + 1, cursor=decoded, user_id=author.id if author else None
+        db,
+        limit=limit + 1,
+        cursor=decoded,
+        user_id=author.id if author else None,
+        viewer_id=viewer.id,
+        public_only=(author is None),
     )
     return paginate(db, viewer, fits, limit, lambda fit: (fit.created_at, fit.id))

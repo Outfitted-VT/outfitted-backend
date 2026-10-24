@@ -5,12 +5,12 @@ from app.core.pagination import InvalidCursorError
 from app.schemas.error import ErrorResponse
 from app.schemas.fit import FitRead
 from app.schemas.pagination import Page
-from app.schemas.user import ProfileRead, UserRead, UserSummary, UserUpdate
+from app.schemas.user import ProfileRead, UserPrivacySettingsRead, UserPrivacySettingsUpdate, UserRead, UserSummary, UserUpdate
 from app.services.engagement import list_saved_fits
 from app.services import follow as follow_service
 from app.services.fit import list_fits
 from app.services.image import ImageNotFoundError
-from app.services.user import UsernameTakenError, get_user_by_username, update_profile
+from app.services.user import UsernameTakenError, get_user_by_username, update_privacy_settings, update_profile
 
 router = APIRouter()
 
@@ -36,6 +36,31 @@ USER_NOT_FOUND_RESPONSE = {
 def read_current_user(current_user: CurrentUser) -> UserRead:
     """Return the logged-in user, including private fields like email."""
     return UserRead.model_validate(current_user)
+
+
+@router.get(
+    "/me/privacy",
+    response_model=UserPrivacySettingsRead,
+    summary="Get your avatar and closet privacy settings",
+    responses=UNAUTHORIZED_RESPONSE,
+)
+def read_privacy_settings(current_user: CurrentUser) -> UserPrivacySettingsRead:
+    """Return user privacy and mannequin avatar mode preferences."""
+    return UserPrivacySettingsRead.model_validate(current_user)
+
+
+@router.patch(
+    "/me/privacy",
+    response_model=UserPrivacySettingsRead,
+    summary="Update your avatar and closet privacy settings",
+    responses=UNAUTHORIZED_RESPONSE,
+)
+def update_privacy(
+    changes: UserPrivacySettingsUpdate, current_user: CurrentUser, db: SessionDep
+) -> UserPrivacySettingsRead:
+    """Update mannequin privacy mode, skin tone, facial feature display, or default closet privacy."""
+    updated = update_privacy_settings(db, current_user, changes)
+    return UserPrivacySettingsRead.model_validate(updated)
 
 
 @router.patch(

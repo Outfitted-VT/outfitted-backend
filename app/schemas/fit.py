@@ -131,6 +131,8 @@ class FitCreate(BaseModel):
     items: Items = []
     occasion_tags: Tags = Field(default=[], description='Where to wear it, e.g. "date night".')
     style_tags: Tags = Field(default=[], description='The style, e.g. "streetwear".')
+    privacy_tier: Literal["public", "close_friends", "vault"] = "public"
+    allow_friend_try_on: bool = True
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -177,6 +179,8 @@ class FitUpdate(BaseModel):
     items: Items | None = Field(default=None, description="Replaces all items when sent.")
     occasion_tags: Tags | None = Field(default=None, description="Replaces them when sent.")
     style_tags: Tags | None = Field(default=None, description="Replaces them when sent.")
+    privacy_tier: Literal["public", "close_friends", "vault"] | None = None
+    allow_friend_try_on: bool | None = None
 
     @field_validator("items", "occasion_tags", "style_tags")
     @classmethod
@@ -197,6 +201,8 @@ class FitRead(BaseModel):
     like_count: int
     liked_by_me: bool
     saved_by_me: bool
+    privacy_tier: str = "public"
+    allow_friend_try_on: bool = True
     created_at: UtcDatetime
 
     @classmethod
@@ -213,5 +219,13 @@ class FitRead(BaseModel):
             like_count=view.like_count,
             liked_by_me=view.liked_by_me,
             saved_by_me=view.saved_by_me,
+            privacy_tier=getattr(fit, "privacy_tier", "public"),
+            allow_friend_try_on=getattr(fit, "allow_friend_try_on", True),
             created_at=fit.created_at,
         )
+
+
+
+class FitPrivacyUpdate(BaseModel):
+    privacy_tier: Literal["public", "close_friends", "vault"] | None = None
+    allow_friend_try_on: bool | None = None

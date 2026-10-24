@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text, Uuid
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -17,11 +17,17 @@ class Fit(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_fits_created_at_id", "created_at", "id"),
         Index("ix_fits_user_id_created_at_id", "user_id", "created_at", "id"),
+        Index("ix_fits_privacy_tier", "privacy_tier"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     caption: Mapped[str | None] = mapped_column(Text)
+
+    # Closet Privacy Tiers: "public" (explore feed), "close_friends" (friends-only feed & tryon), "vault" (private drafts)
+    privacy_tier: Mapped[str] = mapped_column(String(20), default="public", server_default="public")
+    # Whether peers/friends can click "Try on" to drape this fit onto their avatar
+    allow_friend_try_on: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
     author: Mapped[User] = relationship()
     fit_images: Mapped[list["FitImage"]] = relationship(

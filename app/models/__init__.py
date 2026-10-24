@@ -6,7 +6,9 @@ from app.models.engagement import FitLike, FitSave
 from app.models.fit import Fit, FitImage, FitItem, FitTag
 from app.models.follow import Follow
 from app.models.image import Image
+from app.models.impact import ReturnImpactRecord
 from app.models.refresh_token import RefreshToken
+from app.models.sizing import UserReferenceGarment
 from app.models.tryon import TryOn
 from app.models.user import User
 
@@ -22,6 +24,8 @@ __all__ = [
     "Image",
     "ImageDetection",
     "RefreshToken",
+    "ReturnImpactRecord",
     "TryOn",
     "User",
+    "UserReferenceGarment",
 ]
