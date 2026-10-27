@@ -41,24 +41,24 @@ def read_current_user(current_user: CurrentUser) -> UserRead:
 @router.get(
     "/me/privacy",
     response_model=UserPrivacySettingsRead,
-    summary="Get your avatar and closet privacy settings",
+    summary="Get your closet privacy settings",
     responses=UNAUTHORIZED_RESPONSE,
 )
 def read_privacy_settings(current_user: CurrentUser) -> UserPrivacySettingsRead:
-    """Return user privacy and mannequin avatar mode preferences."""
+    """Return the user's default closet privacy."""
     return UserPrivacySettingsRead.model_validate(current_user)
 
 
 @router.patch(
     "/me/privacy",
     response_model=UserPrivacySettingsRead,
-    summary="Update your avatar and closet privacy settings",
+    summary="Update your closet privacy settings",
     responses=UNAUTHORIZED_RESPONSE,
 )
 def update_privacy(
     changes: UserPrivacySettingsUpdate, current_user: CurrentUser, db: SessionDep
 ) -> UserPrivacySettingsRead:
-    """Update mannequin privacy mode, skin tone, facial feature display, or default closet privacy."""
+    """Update the user's default closet privacy."""
     updated = update_privacy_settings(db, current_user, changes)
     return UserPrivacySettingsRead.model_validate(updated)
 

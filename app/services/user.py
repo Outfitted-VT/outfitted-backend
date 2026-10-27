@@ -86,13 +86,9 @@ def update_profile(db: Session, user: User, changes: UserUpdate) -> User:
 
 
 def update_privacy_settings(db: Session, user: User, changes: UserPrivacySettingsUpdate) -> User:
-    """Update user privacy and mannequin settings."""
+    """Update the user's privacy settings."""
     fields = changes.model_fields_set
 
-    if "mannequin_tone" in fields and changes.mannequin_tone is not None:
-        user.mannequin_tone = changes.mannequin_tone
-    if "hide_facial_features" in fields and changes.hide_facial_features is not None:
-        user.hide_facial_features = changes.hide_facial_features
     if "default_closet_privacy" in fields and changes.default_closet_privacy is not None:
         user.default_closet_privacy = changes.default_closet_privacy
 
