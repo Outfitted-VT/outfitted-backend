@@ -9,6 +9,7 @@ Application Default Credentials. Tests replace get_tryon_generator with a fake.
 """
 
 import logging
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Protocol
 
@@ -34,6 +35,45 @@ GEMINI_PROMPT = (
     "and the framing exactly as in the first photo. Do not add any text."
 )
 
+# Piece mode: what each slot's photo shows and which clothing it replaces on the person.
+SLOT_DESCRIPTIONS = {
+    "head": "headwear (such as a hat, cap, or beanie)",
+    "top": "a top (such as a shirt, t-shirt, or sweater) for the upper body",
+    "outerwear": "outerwear (such as a jacket or coat), worn over the top",
+    "one_piece": "a one-piece garment (such as a dress or jumpsuit) for the upper and lower body",
+    "bottom": "a bottom (such as trousers, jeans, a skirt, or shorts) for the lower body",
+    "feet": "footwear (shoes)",
+    "accessory": "an accessory (such as a bag, belt, or scarf)",
+}
+
+PIECES_PROMPT_INTRO = (
+    "The first image is a photo of a person. Each image after it shows one clothing item, "
+    "either on its own or worn by someone else, labeled with where it goes on the body."
+)
+
+PIECES_PROMPT_INSTRUCTIONS = (
+    "Edit the first photo so the person is wearing all of these items together as one "
+    "outfit. Each item replaces only what the person is currently wearing in that place "
+    "(for example, a top replaces their current top, footwear replaces their shoes), and "
+    "everything else the person is wearing stays unchanged. Outerwear goes over the top. "
+    "From each item's image, use only the labeled item: ignore any other clothing, people, "
+    "or background in it. Each item appears once: do not layer a copy of it, and do not add "
+    "any clothing that isn't one of the labeled items or already on the person. Reproduce "
+    "each item's color, pattern, material, and details faithfully, worn naturally and fitted "
+    "to the person's body. "
+    "Never show more of the person's body or skin than the first photo does. "
+    "Keep the person's face, hair, skin tone, body shape, pose, the background, the lighting, "
+    "and the framing exactly as in the first photo. Do not add any text."
+)
+
+
+@dataclass(frozen=True)
+class Garment:
+    """A clothing photo for try-on. `slot` is None when the photo is the whole outfit."""
+
+    jpeg: bytes
+    slot: str | None = None
+
 
 class TryOnError(Exception):
     """Base class. The message is safe to show to users."""
@@ -47,9 +87,19 @@ class TryOnBlockedError(TryOnError):
     """The model refused these photos (safety filters) or returned no image."""
 
 
+class TryOnUnsupportedError(TryOnError):
+    """The configured model can't handle this request (e.g. several pieces)."""
+
+
 class TryOnGenerator(Protocol):
-    def generate(self, person_jpeg: bytes, outfit_jpeg: bytes) -> bytes:
-        """Return the generated image (PNG or JPEG bytes) of the person wearing the outfit."""
+    # How many clothing photos one generate() call accepts.
+    max_garments: int
+
+    def generate(self, person_jpeg: bytes, garments: list[Garment]) -> bytes:
+        """Return the generated image (PNG or JPEG bytes) of the person wearing the garments.
+
+        `garments` is either one whole-outfit photo (slot None) or pieces, each with a slot.
+        """
         ...
 
 
@@ -91,23 +141,45 @@ def _call(fn: Any) -> Any:
 
 
 class GeminiImageGenerator:
-    """Gemini image model, prompted with the person photo then the outfit photo."""
+    """Gemini image model, prompted with the person photo then the clothing photos."""
+
+    # The person photo plus up to 7 pieces (one per slot) stays well within Gemini's
+    # input-image limit.
+    max_garments = 7
 
     def __init__(self, client: Any, model: str) -> None:
         self.client = client
         self.model = model
 
-    def generate(self, person_jpeg: bytes, outfit_jpeg: bytes) -> bytes:
+    @staticmethod
+    def build_contents(person_jpeg: bytes, garments: list[Garment]) -> list[Any]:
+        """The request contents: images in order, with text labels for pieces."""
         from google.genai import types
 
+        def image(jpeg: bytes) -> Any:
+            return types.Part.from_bytes(data=jpeg, mime_type=INPUT_MIME_TYPE)
+
+        if len(garments) == 1 and garments[0].slot is None:
+            # Whole outfit: one photo, the original prompt.
+            return [image(person_jpeg), image(garments[0].jpeg), GEMINI_PROMPT]
+
+        contents: list[Any] = [image(person_jpeg), PIECES_PROMPT_INTRO]
+        for number, garment in enumerate(garments, start=2):
+            contents += [
+                f"Image {number} is {SLOT_DESCRIPTIONS[garment.slot]}:",
+                image(garment.jpeg),
+            ]
+        contents.append(PIECES_PROMPT_INSTRUCTIONS)
+        return contents
+
+    def generate(self, person_jpeg: bytes, garments: list[Garment]) -> bytes:
+        from google.genai import types
+
+        contents = self.build_contents(person_jpeg, garments)
         response = _call(
             lambda: self.client.models.generate_content(
                 model=self.model,
-                contents=[
-                    types.Part.from_bytes(data=person_jpeg, mime_type=INPUT_MIME_TYPE),
-                    types.Part.from_bytes(data=outfit_jpeg, mime_type=INPUT_MIME_TYPE),
-                    GEMINI_PROMPT,
-                ],
+                contents=contents,
                 config=types.GenerateContentConfig(
                     response_modalities=["IMAGE"], candidate_count=1
                 ),
@@ -130,12 +202,19 @@ class GeminiImageGenerator:
 class VirtualTryOnGenerator:
     """The dedicated virtual-try-on-001 model (person image + one product image)."""
 
+    # It takes a single product image, so it can't combine pieces.
+    max_garments = 1
+
     def __init__(self, client: Any, model: str) -> None:
         self.client = client
         self.model = model
 
-    def generate(self, person_jpeg: bytes, outfit_jpeg: bytes) -> bytes:
+    def generate(self, person_jpeg: bytes, garments: list[Garment]) -> bytes:
         from google.genai import types
+
+        if len(garments) != 1:
+            raise TryOnUnsupportedError("This try-on model can only use one clothing photo")
+        outfit_jpeg = garments[0].jpeg
 
         response = _call(
             lambda: self.client.models.recontext_image(
@@ -163,10 +242,12 @@ class VirtualTryOnGenerator:
 
 
 class UnavailableGenerator:
+    max_garments = 7
+
     def __init__(self, message: str) -> None:
         self.message = message
 
-    def generate(self, person_jpeg: bytes, outfit_jpeg: bytes) -> bytes:
+    def generate(self, person_jpeg: bytes, garments: list[Garment]) -> bytes:
         raise TryOnUnavailableError(self.message)
 
 

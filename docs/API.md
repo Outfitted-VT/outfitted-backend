@@ -486,16 +486,22 @@ async function uploadImage(file: File) {
 
 `POST /tryons` 🔒
 
-Puts the outfit from one photo onto a photo of you, using a Google image model.
+Puts clothes onto a photo of you, using a Google image model. There are two modes, which map to an **Entire fit / Pieces** toggle in the UI:
 
-1. Upload both photos with [Upload an image](#upload-an-image): a photo of yourself and a photo of the outfit (on its own, or worn by someone).
-2. Call this endpoint with both ids. **It takes a while, often 10–30 seconds**: show progress, and don't time out the request early.
+- **Entire fit**: one photo of a whole outfit (on its own, or worn by someone). Send `outfit_image_id`.
+- **Pieces**: separate photos combined into one outfit, e.g. a top from one photo, jeans from another, and shoes from a third. Send `pieces`.
+
+1. Upload the photos with [Upload an image](#upload-an-image): a photo of yourself, plus the outfit photo or each piece's photo.
+2. Call this endpoint. **It takes a while, often 10–30 seconds, and longer with more pieces**: show progress, and don't time out the request early.
 3. To post the result, [create a fit](#post-a-fit) with `result_image.id` in `image_ids`.
 
 | Field | Required | Rules |
 |---|---|---|
 | `person_image_id` | yes | An image you uploaded. A clear photo of one person works best, ideally full-body. |
-| `outfit_image_id` | yes | An image you uploaded. |
+| `outfit_image_id` | one of these two | Entire-fit mode. An image you uploaded. |
+| `pieces` | one of these two | Pieces mode. 1–7 items of `{ "slot": ..., "image_id": ... }`. |
+
+**Entire fit:**
 
 ```json
 {
@@ -503,6 +509,38 @@ Puts the outfit from one photo onto a photo of you, using a Google image model.
   "outfit_image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26"
 }
 ```
+
+**Pieces:**
+
+```json
+{
+  "person_image_id": "517830fe-d102-41c1-84b5-f7036e814611",
+  "pieces": [
+    { "slot": "top", "image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26" },
+    { "slot": "bottom", "image_id": "9b2e4c1a-5d3f-4e8a-b7c6-0a1f2e3d4c5b" },
+    { "slot": "feet", "image_id": "c4d5e6f7-a8b9-4c0d-9e1f-2a3b4c5d6e7f" }
+  ]
+}
+```
+
+**Slots**, head to toe. Use these for the "add an image" buttons on the body diagram:
+
+| Slot | Body area | For |
+|---|---|---|
+| `head` | Head | Hats, caps, beanies |
+| `top` | Upper body | Shirts, tees, sweaters |
+| `outerwear` | Upper body (over the top) | Jackets, coats |
+| `one_piece` | Upper + lower body | Dresses, jumpsuits |
+| `bottom` | Lower body | Trousers, jeans, skirts, shorts |
+| `feet` | Feet | Shoes |
+| `accessory` | Anywhere | Bags, belts, scarves |
+
+Rules (breaking them returns `422`):
+
+- Each slot at most once, and each image at most once.
+- `one_piece` can't be combined with `top` or `bottom`, since it replaces both. In the UI, picking a dress should clear or disable the top and bottom buttons, and the other way round. It can be combined with `outerwear`, `feet` and the others.
+- Only fill the slots the user wants to change. Everything else on the person stays as it is in their photo.
+- The order you send pieces in doesn't matter: they're always used and returned head to toe.
 
 **Response** `201`:
 
@@ -512,19 +550,37 @@ Puts the outfit from one photo onto a photo of you, using a Google image model.
   "result_image": { "id": "...", "width": 1024, "height": 1536, "url": "http://localhost:8000/media/images/....webp", "generated": true },
   "person_image": { "id": "517830fe-...", "width": 1080, "height": 1350, "url": "...", "generated": false },
   "outfit_image": { "id": "16cc86b0-...", "width": 1080, "height": 1350, "url": "...", "generated": false },
+  "pieces": [],
+  "mode": "outfit",
   "model": "gemini-3.1-flash-image",
   "created_at": "2026-10-21T01:20:00.000000Z"
 }
 ```
 
+In pieces mode, `outfit_image` is `null` and `pieces` lists what was used, head to toe:
+
+```json
+{
+  "mode": "pieces",
+  "outfit_image": null,
+  "pieces": [
+    { "slot": "top", "image": { "id": "16cc86b0-...", "width": 1080, "height": 1350, "url": "...", "generated": false } },
+    { "slot": "feet", "image": { "id": "c4d5e6f7-...", "width": 1080, "height": 1080, "url": "...", "generated": false } }
+  ]
+}
+```
+
 - `result_image` is a new image **you own**, like an upload. It isn't posted anywhere until you create a fit with it.
-- `person_image` / `outfit_image` are `null` if those images were deleted later.
+- `mode` is `"outfit"` or `"pieces"`.
+- `person_image`, `outfit_image` and each piece's `image` are `null` if those images were deleted later.
 
 **Responses:**
 
 | Status | `detail` | What to do |
 |---|---|---|
 | `400` | `"Image not found"` | An id doesn't exist or isn't yours. |
+| `400` | `"Try-on can only use one photo right now. Choose 'Entire fit' instead."` | The server's configured model can't combine pieces. Only happens if the backend is switched to the older `virtual-try-on-001` model. |
+| `422` | validation `detail` list | Both or neither of `outfit_image_id`/`pieces`, a repeated slot or image, `one_piece` with `top`/`bottom`, or an unknown slot. |
 | `422` | `"We couldn't create a try-on from these photos"` | The model refused the photos (safety filters) or didn't return an image. Suggest different photos. |
 | `429` | `"You've reached today's try-on limit. Try again tomorrow."` | Each user can make a limited number per 24 hours (default 20). |
 | `503` | `"Try-on is temporarily unavailable"`, `"Try-on is busy right now..."` or `"Try-on isn't set up on this server"` | Show the message and let the user retry later. |
@@ -532,10 +588,22 @@ Puts the outfit from one photo onto a photo of you, using a Google image model.
 Failed try-ons (`422`, `503`) don't count toward the daily limit.
 
 ```ts
+type Slot = "head" | "top" | "outerwear" | "one_piece" | "bottom" | "feet" | "accessory";
+
+// mode comes from the Entire fit / Pieces toggle.
+// pieceIds holds the image picked for each slot button, e.g. { top: "...", feet: "..." }.
+const body =
+  mode === "outfit"
+    ? { person_image_id: personId, outfit_image_id: outfitId }
+    : {
+        person_image_id: personId,
+        pieces: Object.entries(pieceIds).map(([slot, image_id]) => ({ slot, image_id })),
+      };
+
 const res = await apiFetch("/tryons", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ person_image_id: personId, outfit_image_id: outfitId }),
+  body: JSON.stringify(body),
 });
 if (res.status === 201) {
   const tryon = await res.json(); // show tryon.result_image.url

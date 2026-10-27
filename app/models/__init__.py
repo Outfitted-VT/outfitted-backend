@@ -9,7 +9,7 @@ from app.models.image import Image
 from app.models.impact import ReturnImpactRecord
 from app.models.refresh_token import RefreshToken
 from app.models.sizing import UserReferenceGarment
-from app.models.tryon import TryOn
+from app.models.tryon import TryOn, TryOnPiece
 from app.models.user import User
 
 __all__ = [
@@ -26,6 +26,7 @@ __all__ = [
     "RefreshToken",
     "ReturnImpactRecord",
     "TryOn",
+    "TryOnPiece",
     "User",
     "UserReferenceGarment",
 ]
