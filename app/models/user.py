@@ -24,8 +24,6 @@ class User(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(default=True)
 
     # Privacy & Avatar Settings (Feature 7 & Feature 8)
-    # "photorealistic" (real likeness) or "mannequin" (neutral stylized aesthetic 3D mannequin)
-    avatar_mode: Mapped[str] = mapped_column(String(20), default="photorealistic", server_default="photorealistic")
     mannequin_tone: Mapped[str] = mapped_column(String(30), default="neutral_onyx", server_default="neutral_onyx")
     hide_facial_features: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     default_closet_privacy: Mapped[str] = mapped_column(String(20), default="public", server_default="public")

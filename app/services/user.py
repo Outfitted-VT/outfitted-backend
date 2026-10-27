@@ -86,11 +86,9 @@ def update_profile(db: Session, user: User, changes: UserUpdate) -> User:
 
 
 def update_privacy_settings(db: Session, user: User, changes: UserPrivacySettingsUpdate) -> User:
-    """Update user privacy and avatar mode settings."""
+    """Update user privacy and mannequin settings."""
     fields = changes.model_fields_set
 
-    if "avatar_mode" in fields and changes.avatar_mode is not None:
-        user.avatar_mode = changes.avatar_mode
     if "mannequin_tone" in fields and changes.mannequin_tone is not None:
         user.mannequin_tone = changes.mannequin_tone
     if "hide_facial_features" in fields and changes.hide_facial_features is not None:
