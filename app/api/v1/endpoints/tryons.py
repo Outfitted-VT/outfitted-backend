@@ -5,7 +5,7 @@ from app.schemas.error import ErrorResponse
 from app.schemas.tryon import TryOnCreate, TryOnRead
 from app.services.image import ImageNotFoundError
 from app.services.tryon import DailyLimitReachedError, create_tryon
-from app.tryon import TryOnBlockedError, TryOnUnavailableError
+from app.tryon import TryOnBlockedError, TryOnUnavailableError, TryOnUnsupportedError
 
 router = APIRouter()
 
@@ -18,7 +18,8 @@ router = APIRouter()
     responses={
         status.HTTP_400_BAD_REQUEST: {
             "model": ErrorResponse,
-            "description": "An image doesn't exist or isn't yours.",
+            "description": "An image doesn't exist or isn't yours, or the configured model "
+            "can't combine pieces.",
             "content": {"application/json": {"example": {"detail": "Image not found"}}},
         },
         status.HTTP_422_UNPROCESSABLE_CONTENT: {
@@ -56,22 +57,29 @@ def create(
     generator: TryOnGeneratorDep,
 ) -> TryOnRead:
     """
-    Put the outfit from one photo onto a photo of yourself.
+    Put clothes onto a photo of yourself, in one of two modes:
 
-    1. Upload both photos with `POST /images`: a photo of yourself (`person_image_id`) and a
-       photo of the outfit (`outfit_image_id`), either on its own or worn by someone.
-    2. Call this endpoint. Generation takes several seconds, often 10–30.
+    - **Entire fit**: `outfit_image_id`, one photo of a whole outfit (on its own or worn).
+    - **Pieces**: `pieces`, separate photos combined into one outfit, each with a `slot`:
+      `head`, `top`, `outerwear`, `one_piece` (dress/jumpsuit), `bottom`, `feet`,
+      `accessory`. Each slot at most once; `one_piece` can't be combined with `top` or
+      `bottom`.
+
+    1. Upload a photo of yourself (`person_image_id`) and the clothing photos with
+       `POST /images`.
+    2. Call this endpoint with exactly one of `outfit_image_id` or `pieces`. Generation takes
+       several seconds, often 10–30 (longer with more pieces).
     3. To post it, create a fit with `result_image.id` in `image_ids` (`POST /fits`).
 
     The result is a new image you own, with `generated: true` so clients can label it as
     AI-generated. Each user can make a limited number of try-ons per day.
     """
     try:
-        tryon = create_tryon(
-            db, storage, generator, current_user, tryon_in.person_image_id, tryon_in.outfit_image_id
-        )
+        tryon = create_tryon(db, storage, generator, current_user, tryon_in)
     except ImageNotFoundError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image not found") from None
+    except TryOnUnsupportedError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from None
     except DailyLimitReachedError:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

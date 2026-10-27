@@ -1,4 +1,5 @@
 import io
+import uuid
 from collections.abc import Callable
 from types import SimpleNamespace
 
@@ -6,15 +7,23 @@ import pytest
 from fastapi.testclient import TestClient
 from google.genai import errors
 from PIL import Image
+from sqlalchemy.orm import Session
 
 from app import tryon as tryon_module
 from app.core.config import settings
 from app.core.images import to_jpeg
 from app.main import app
+from app.models.image import Image as ImageModel
+from app.models.tryon import TryOn
+from app.schemas.tryon import PieceSlot
 from app.tryon import (
+    GEMINI_PROMPT,
+    SLOT_DESCRIPTIONS,
+    Garment,
     GeminiImageGenerator,
     TryOnBlockedError,
     TryOnUnavailableError,
+    TryOnUnsupportedError,
     UnavailableGenerator,
     VirtualTryOnGenerator,
     get_tryon_generator,
@@ -28,13 +37,16 @@ FITS_URL = "/api/v1/fits"
 class FakeGenerator:
     """Stands in for Google: records its inputs and returns a fixed image, or raises."""
 
-    def __init__(self, result: bytes | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self, result: bytes | None = None, error: Exception | None = None, max_garments: int = 7
+    ) -> None:
         self.result = result if result is not None else make_image_bytes("PNG", size=(40, 60))
         self.error = error
-        self.calls: list[tuple[bytes, bytes]] = []
+        self.max_garments = max_garments
+        self.calls: list[tuple[bytes, list[Garment]]] = []
 
-    def generate(self, person_jpeg: bytes, outfit_jpeg: bytes) -> bytes:
-        self.calls.append((person_jpeg, outfit_jpeg))
+    def generate(self, person_jpeg: bytes, garments: list[Garment]) -> bytes:
+        self.calls.append((person_jpeg, garments))
         if self.error:
             raise self.error
         return self.result
@@ -96,9 +108,10 @@ def test_generator_receives_jpegs(
     try_on(client, user, upload_image(user), upload_image(user))
 
     # Uploads are stored as WebP; the models only accept JPEG or PNG.
-    [(person_jpeg, outfit_jpeg)] = generator.calls
+    [(person_jpeg, [outfit])] = generator.calls
     assert Image.open(io.BytesIO(person_jpeg)).format == "JPEG"
-    assert Image.open(io.BytesIO(outfit_jpeg)).format == "JPEG"
+    assert Image.open(io.BytesIO(outfit.jpeg)).format == "JPEG"
+    assert outfit.slot is None
 
 
 def test_result_can_be_posted_as_a_fit(
@@ -310,7 +323,7 @@ def test_gemini_returns_the_image_part() -> None:
     )
     generator = GeminiImageGenerator(stub_client("generate_content", response), "gemini-3.1-flash-image")
 
-    assert generator.generate(b"person", b"outfit") == b"png-bytes"
+    assert generator.generate(b"person", [Garment(b"outfit")]) == b"png-bytes"
 
 
 def test_gemini_without_image_is_blocked() -> None:
@@ -318,7 +331,7 @@ def test_gemini_without_image_is_blocked() -> None:
     generator = GeminiImageGenerator(stub_client("generate_content", response), "gemini-3.1-flash-image")
 
     with pytest.raises(TryOnBlockedError):
-        generator.generate(b"person", b"outfit")
+        generator.generate(b"person", [Garment(b"outfit")])
 
 
 def test_virtual_try_on_returns_generated_image() -> None:
@@ -327,7 +340,7 @@ def test_virtual_try_on_returns_generated_image() -> None:
     )
     generator = VirtualTryOnGenerator(stub_client("recontext_image", response), "virtual-try-on-001")
 
-    assert generator.generate(b"person", b"outfit") == b"png-bytes"
+    assert generator.generate(b"person", [Garment(b"outfit")]) == b"png-bytes"
 
 
 def test_virtual_try_on_filtered_is_blocked() -> None:
@@ -337,7 +350,7 @@ def test_virtual_try_on_filtered_is_blocked() -> None:
     generator = VirtualTryOnGenerator(stub_client("recontext_image", response), "virtual-try-on-001")
 
     with pytest.raises(TryOnBlockedError):
-        generator.generate(b"person", b"outfit")
+        generator.generate(b"person", [Garment(b"outfit")])
 
 
 @pytest.mark.parametrize(
@@ -353,7 +366,7 @@ def test_google_errors_are_translated(error: Exception, expected: type[Exception
     generator = GeminiImageGenerator(stub_client("generate_content", error=error), "gemini-3.1-flash-image")
 
     with pytest.raises(expected):
-        generator.generate(b"person", b"outfit")
+        generator.generate(b"person", [Garment(b"outfit")])
 
 
 # --- input conversion ----------------------------------------------------------------------
@@ -368,3 +381,266 @@ def test_to_jpeg_puts_transparent_areas_on_white() -> None:
     assert converted.format == "JPEG"
     r, g, b = converted.getpixel((5, 5))
     assert min(r, g, b) > 240
+
+
+# --- pieces mode ---------------------------------------------------------------------------
+
+
+def try_on_pieces(client: TestClient, user: AuthedUser, person_id: str, pieces: dict[str, str]):
+    return client.post(
+        TRYONS_URL,
+        headers=user.headers,
+        json={
+            "person_image_id": person_id,
+            "pieces": [{"slot": slot, "image_id": image_id} for slot, image_id in pieces.items()],
+        },
+    )
+
+
+def test_whole_outfit_response_shape(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    user = create_user()
+
+    body = try_on(client, user, upload_image(user), upload_image(user)).json()
+
+    assert body["mode"] == "outfit"
+    assert body["pieces"] == []
+
+
+def test_pieces_tryon(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    user = create_user()
+    person = upload_image(user)
+    pieces = {"top": upload_image(user), "bottom": upload_image(user), "feet": upload_image(user)}
+
+    response = try_on_pieces(client, user, person, pieces)
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["mode"] == "pieces"
+    assert body["outfit_image"] is None
+    assert [(p["slot"], p["image"]["id"]) for p in body["pieces"]] == list(pieces.items())
+    assert body["result_image"]["generated"] is True
+    [(_, garments)] = generator.calls
+    assert [g.slot for g in garments] == ["top", "bottom", "feet"]
+    assert all(Image.open(io.BytesIO(g.jpeg)).format == "JPEG" for g in garments)
+
+
+def test_pieces_are_sent_head_to_toe(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    user = create_user()
+    person = upload_image(user)
+    # Sent in a scrambled order.
+    pieces = {
+        "feet": upload_image(user),
+        "head": upload_image(user),
+        "accessory": upload_image(user),
+        "outerwear": upload_image(user),
+        "top": upload_image(user),
+    }
+
+    body = try_on_pieces(client, user, person, pieces).json()
+
+    expected = ["head", "top", "outerwear", "feet", "accessory"]
+    assert [g.slot for g in generator.calls[0][1]] == expected
+    assert [p["slot"] for p in body["pieces"]] == expected
+    # Each slot keeps its own image.
+    assert {p["slot"]: p["image"]["id"] for p in body["pieces"]} == pieces
+
+
+def test_single_piece_is_allowed(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    user = create_user()
+
+    response = try_on_pieces(client, user, upload_image(user), {"feet": upload_image(user)})
+
+    assert response.status_code == 201
+    assert [g.slot for g in generator.calls[0][1]] == ["feet"]
+
+
+def _invalid_bodies(person: str, a: str, b: str) -> dict[str, dict]:
+    def pieces(*items: tuple[str, str]) -> dict:
+        return {
+            "person_image_id": person,
+            "pieces": [{"slot": slot, "image_id": image_id} for slot, image_id in items],
+        }
+
+    return {
+        "neither mode": {"person_image_id": person},
+        "both modes": {**pieces(("top", b)), "outfit_image_id": a},
+        "no pieces": pieces(),
+        "duplicate slot": pieces(("top", a), ("top", b)),
+        "same image twice": pieces(("top", a), ("bottom", a)),
+        "one_piece with top": pieces(("one_piece", a), ("top", b)),
+        "one_piece with bottom": pieces(("one_piece", a), ("bottom", b)),
+        "unknown slot": pieces(("hands", a)),
+    }
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "neither mode",
+        "both modes",
+        "no pieces",
+        "duplicate slot",
+        "same image twice",
+        "one_piece with top",
+        "one_piece with bottom",
+        "unknown slot",
+    ],
+)
+def test_invalid_requests(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+    reason: str,
+) -> None:
+    user = create_user()
+    body = _invalid_bodies(upload_image(user), upload_image(user), upload_image(user))[reason]
+
+    response = client.post(TRYONS_URL, headers=user.headers, json=body)
+
+    assert response.status_code == 422, reason
+    assert generator.calls == []
+
+
+def test_one_piece_with_outerwear_and_shoes_is_fine(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    user = create_user()
+    pieces = {"one_piece": upload_image(user), "outerwear": upload_image(user), "feet": upload_image(user)}
+
+    assert try_on_pieces(client, user, upload_image(user), pieces).status_code == 201
+
+
+def test_piece_must_be_your_image(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    user, other = create_user("jane"), create_user("bob")
+
+    response = try_on_pieces(
+        client, user, upload_image(user), {"top": upload_image(user), "feet": upload_image(other)}
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Image not found"}
+    assert generator.calls == []
+
+
+def test_model_that_takes_one_photo_rejects_pieces(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "TRYON_DAILY_LIMIT", 1)
+    fake = FakeGenerator(max_garments=1)
+    use_generator(fake)
+    user = create_user()
+    person = upload_image(user)
+
+    response = try_on_pieces(client, user, person, {"top": upload_image(user), "feet": upload_image(user)})
+
+    assert response.status_code == 400
+    assert "one photo" in response.json()["detail"]
+    assert fake.calls == []
+    # Rejected requests don't use up the daily limit.
+    assert try_on(client, user, person, upload_image(user)).status_code == 201
+
+
+def test_deleted_piece_image_shows_as_null(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+    db: Session,
+) -> None:
+    user = create_user()
+    top = upload_image(user)
+    tryon_id = try_on_pieces(client, user, upload_image(user), {"top": top}).json()["id"]
+
+    db.delete(db.get(ImageModel, uuid.UUID(top)))
+    db.commit()
+    db.expire_all()
+
+    tryon = db.get(TryOn, uuid.UUID(tryon_id))
+    assert [(piece.slot, piece.image) for piece in tryon.pieces] == [("top", None)]
+
+
+# --- what Gemini receives ------------------------------------------------------------------
+
+
+def recording_gemini() -> tuple[GeminiImageGenerator, list[dict]]:
+    """A Gemini generator whose fake client records each call's arguments."""
+    calls: list[dict] = []
+
+    def generate_content(**kwargs):
+        calls.append(kwargs)
+        return gemini_response(SimpleNamespace(inline_data=SimpleNamespace(data=b"png-bytes")))
+
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    return GeminiImageGenerator(client, "gemini-3.1-flash-image"), calls
+
+
+def describe(contents: list) -> list[str]:
+    """Contents as text, with each image shown as <its bytes>."""
+    return [part if isinstance(part, str) else f"<{part.inline_data.data.decode()}>" for part in contents]
+
+
+def test_gemini_whole_outfit_request_is_unchanged() -> None:
+    generator, calls = recording_gemini()
+
+    generator.generate(b"person", [Garment(b"outfit")])
+
+    assert describe(calls[0]["contents"]) == ["<person>", "<outfit>", GEMINI_PROMPT]
+
+
+def test_gemini_pieces_are_labeled_in_order() -> None:
+    generator, calls = recording_gemini()
+
+    generator.generate(b"person", [Garment(b"tee", "top"), Garment(b"sneakers", "feet")])
+
+    contents = describe(calls[0]["contents"])
+    assert contents[0] == "<person>"
+    assert contents[2:6] == [
+        "Image 2 is a top (such as a shirt, t-shirt, or sweater) for the upper body:",
+        "<tee>",
+        "Image 3 is footwear (shoes):",
+        "<sneakers>",
+    ]
+    assert "wearing all of these items together" in contents[-1]
+
+
+def test_every_slot_has_a_description() -> None:
+    assert set(SLOT_DESCRIPTIONS) == {slot.value for slot in PieceSlot}
+
+
+def test_virtual_try_on_rejects_several_garments() -> None:
+    generator = VirtualTryOnGenerator(stub_client("recontext_image"), "virtual-try-on-001")
+
+    with pytest.raises(TryOnUnsupportedError):
+        generator.generate(b"person", [Garment(b"tee", "top"), Garment(b"shoes", "feet")])
