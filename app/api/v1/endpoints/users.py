@@ -5,12 +5,12 @@ from app.core.pagination import InvalidCursorError
 from app.schemas.error import ErrorResponse
 from app.schemas.fit import FitRead
 from app.schemas.pagination import Page
-from app.schemas.user import ProfileRead, UserPrivacySettingsRead, UserPrivacySettingsUpdate, UserRead, UserSummary, UserUpdate
+from app.schemas.user import ProfileRead, UserPrivacySettingsRead, UserPrivacySettingsUpdate, UserRead, UserSearchResult, UserSummary, UserUpdate
 from app.services.engagement import list_saved_fits
 from app.services import follow as follow_service
 from app.services.fit import list_fits
 from app.services.image import ImageNotFoundError
-from app.services.user import UsernameTakenError, get_user_by_username, update_privacy_settings, update_profile
+from app.services.user import UsernameTakenError, get_user_by_username, search_users as search_users_service, update_privacy_settings, update_profile
 
 router = APIRouter()
 
@@ -124,6 +124,22 @@ def read_saved_fits(
     except InvalidCursorError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from None
     return Page(items=[FitRead.from_view(view) for view in page.views], next_cursor=page.next_cursor)
+
+
+@router.get(
+    "/search",
+    response_model=list[UserSearchResult],
+    summary="Search users",
+    responses=UNAUTHORIZED_RESPONSE,
+)
+def search_users(
+    current_user: CurrentUser,
+    db: SessionDep,
+    q: str = "",
+    limit: PageLimit = 20,
+) -> list[UserSearchResult]:
+    """Search users by username or full name."""
+    return search_users_service(db, current_user, query=q, limit=limit)
 
 
 @router.get(

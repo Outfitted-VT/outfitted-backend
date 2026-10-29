@@ -2,13 +2,16 @@
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password, verify_password
+from app.models.follow import Follow
 from app.models.user import User
 from app.repositories import user as user_repository
-from app.schemas.user import UserCreate, UserPrivacySettingsUpdate, UserUpdate
+from app.schemas.image import ImageRead
+from app.schemas.user import UserCreate, UserPrivacySettingsUpdate, UserSearchResult, UserUpdate
 from app.services.image import get_owned_images
 
 
@@ -99,6 +102,39 @@ def update_privacy_settings(db: Session, user: User, changes: UserPrivacySetting
 
 # Verified against when the email doesn't exist, so a login attempt takes the same time
 # whether or not the account exists (otherwise response timing reveals registered emails).
+def search_users(
+    db: Session,
+    viewer: User,
+    query: str = "",
+    *,
+    limit: int = 20,
+) -> list[UserSearchResult]:
+    users = user_repository.search(db, query=query, exclude_user_id=viewer.id, limit=limit)
+    if not users:
+        return []
+
+    following_ids = set(
+        db.scalars(
+            select(Follow.followee_id).where(
+                Follow.follower_id == viewer.id,
+                Follow.followee_id.in_([u.id for u in users]),
+            )
+        ).all()
+    )
+
+    return [
+        UserSearchResult(
+            id=u.id,
+            username=u.username,
+            full_name=u.full_name,
+            avatar=ImageRead.model_validate(u.avatar) if u.avatar else None,
+            bio=u.bio,
+            is_following=u.id in following_ids,
+        )
+        for u in users
+    ]
+
+
 _DUMMY_HASH = hash_password("dummy-password-for-timing")
 
 

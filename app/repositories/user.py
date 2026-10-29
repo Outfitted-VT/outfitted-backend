@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.user import User
@@ -29,3 +29,28 @@ def add(db: Session, user: User) -> User:
     db.flush()
     db.refresh(user)
     return user
+
+
+def search(
+    db: Session,
+    query: str = "",
+    *,
+    exclude_user_id: uuid.UUID | None = None,
+    limit: int = 20,
+) -> list[User]:
+    stmt = select(User).where(User.is_active.is_(True))
+    if exclude_user_id is not None:
+        stmt = stmt.where(User.id != exclude_user_id)
+
+    q = query.strip().lower()
+    if q:
+        term = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(User.username).like(term),
+                func.lower(User.full_name).like(term),
+            )
+        )
+
+    stmt = stmt.order_by(User.username).limit(limit)
+    return list(db.scalars(stmt).all())

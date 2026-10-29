@@ -861,6 +861,7 @@ async function toggleLike(fit: Fit) {
 | Unfollow | `DELETE /users/{username}/follow` | `204` · `404` |
 | Followers | `GET /users/{username}/followers?limit=20&cursor=...` | [page](#pagination) of users, most recent first |
 | Following | `GET /users/{username}/following?limit=20&cursor=...` | [page](#pagination) of users, most recent first |
+| Search | `GET /users/search?q=...&limit=20` | list of users matching query, including `is_following` |
 
 All 🔒. Users in follower/following lists have the compact shape:
 
