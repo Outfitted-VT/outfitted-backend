@@ -10,7 +10,7 @@ from app.schemas.image import ImageRead
 USERNAME_PATTERN = re.compile(r"^[a-z0-9_.]{3,30}$")
 # Names that would clash with routes (/users/me) or be used to impersonate staff.
 RESERVED_USERNAMES = {
-    "me", "admin", "administrator", "api", "auth", "explore", "feed", "help", "login",
+    "me", "search", "admin", "administrator", "api", "auth", "explore", "feed", "help", "login",
     "logout", "outfitted", "root", "settings", "signup", "staff", "support", "system",
 }
 
@@ -97,6 +97,13 @@ class UserSummary(BaseModel):
     avatar: ImageRead | None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserSearchResult(UserSummary):
+    """Result when searching for users/friends."""
+
+    bio: str | None = None
+    is_following: bool = False
 
 
 class UserRead(UserSummary):
