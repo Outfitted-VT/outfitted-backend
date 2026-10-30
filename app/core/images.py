@@ -4,7 +4,7 @@ import io
 import warnings
 from dataclasses import dataclass
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageDraw, ImageFilter, ImageOps, UnidentifiedImageError
 
 ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP"}
 MAX_DIMENSION = 2048
@@ -93,3 +93,39 @@ def crop_jpeg(jpeg: bytes, box: list[int], *, padding: float = 0.08, max_side: i
     output = io.BytesIO()
     crop.save(output, format="JPEG", quality=85)
     return output.getvalue()
+
+
+def blur_regions(data: bytes, boxes: list[list[int]], *, padding: float = 0.3) -> ProcessedImage:
+    """Blur [ymin, xmin, ymax, xmax] boxes (scaled 0-1000) of a stored image, e.g. faces.
+
+    Each region is pixelated before it's blurred, so no detail survives to be sharpened back,
+    and is pasted through a soft oval so the edge blends in. Re-encoded as WebP like uploads.
+    """
+    image = Image.open(io.BytesIO(data))
+    image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+    for box in boxes:
+        ymin, xmin, ymax, xmax = (min(max(v, 0), 1000) / 1000 for v in box)
+        pad_y, pad_x = (ymax - ymin) * padding, (xmax - xmin) * padding
+        left = max(0, int((xmin - pad_x) * image.width))
+        top = max(0, int((ymin - pad_y) * image.height))
+        right = min(image.width, int((xmax + pad_x) * image.width))
+        bottom = min(image.height, int((ymax + pad_y) * image.height))
+        width, height = right - left, bottom - top
+        if width < 2 or height < 2:
+            continue
+
+        region = image.crop((left, top, right, bottom))
+        blocks = (8, max(1, round(8 * height / width)))
+        obscured = region.resize(blocks, Image.Resampling.BILINEAR).resize(
+            (width, height), Image.Resampling.BILINEAR
+        )
+        obscured = obscured.filter(ImageFilter.GaussianBlur(max(width, height) / 16))
+
+        mask = Image.new("L", (width, height), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, width - 1, height - 1), fill=255)
+        mask = mask.filter(ImageFilter.GaussianBlur(min(width, height) / 30))
+        image.paste(obscured, (left, top), mask)
+
+    output = io.BytesIO()
+    image.save(output, format="WEBP", quality=85)
+    return ProcessedImage(data=output.getvalue(), width=image.width, height=image.height)

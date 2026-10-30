@@ -230,6 +230,74 @@ def test_parse_matches_ranks_other_currencies_last() -> None:
     ]
 
 
+def test_parse_matches_ranks_the_wrong_color_last() -> None:
+    # Real case: a green Hollister tee came first for a blue t-shirt.
+    results = {
+        "visual_matches": [
+            {"title": "Mens T Shirt Green Short Sleeve Crew Neck", "link": "https://a.example/green", "price": {"value": "$13"}},
+            {"title": "Classic Crew Neck T-Shirt", "link": "https://b.example/plain", "price": {"value": "$20"}},
+            {"title": "Light Blue Crew Neck T-Shirt", "link": "https://c.example/blue", "price": {"value": "$18"}},
+        ]
+    }
+
+    matches = parse_matches(results, "blue short sleeve crew neck t-shirt", limit=3)
+
+    assert [m.link for m in matches] == [
+        "https://c.example/blue",
+        "https://b.example/plain",
+        "https://a.example/green",
+    ]
+
+
+def test_parse_matches_ranks_unrelated_titles_last() -> None:
+    # Real case: tapered pants from a store came second for a t-shirt.
+    results = {
+        "visual_matches": [
+            {"title": "Tapered Pants 'Alen' in Anthracite", "link": "https://store.example/pants", "price": {"value": "$44"}},
+            {"title": "Blue Short Sleeve Tee", "link": "https://www.poshmark.com/listing/1", "price": {"value": "$18"}},
+        ]
+    }
+
+    matches = parse_matches(results, "blue short sleeve crew neck t-shirt", limit=2)
+
+    assert [m.link for m in matches] == ["https://www.poshmark.com/listing/1", "https://store.example/pants"]
+
+
+def test_parse_matches_drops_social_posts() -> None:
+    # Real case: Facebook posts were offered as shop links for a skull cap.
+    results = {
+        "visual_matches": [
+            {"title": "You never know who's going to be in your city", "link": "https://www.facebook.com/p/1"},
+            {"title": "Beanie video", "link": "https://m.tiktok.com/@a/video/2"},
+            {"title": "Black Skull Cap", "link": "https://shop.example/cap", "price": {"value": "$15"}},
+        ]
+    }
+
+    matches = parse_matches(results, "black fitted skull cap", limit=3)
+
+    assert [m.link for m in matches] == ["https://shop.example/cap"]
+
+
+def test_parse_matches_ranks_resale_after_stores() -> None:
+    results = {
+        "visual_matches": [
+            {"title": "Navy Jogger Size XL", "link": "https://www.ebay.co.uk/itm/1", "price": {"value": "$20"}},
+            {"title": "Navy Jogger", "link": "https://www.depop.com/products/2", "price": {"value": "$15"}},
+            {"title": "Navy Jogger", "link": "https://store.example/jogger", "price": {"value": "$60"}},
+            {"title": "Navy Jogger lookbook", "link": "https://blog.example/joggers"},
+        ]
+    }
+
+    matches = parse_matches(results, "navy athletic jogger", limit=4)
+
+    assert [m.link for m in matches] == [
+        "https://store.example/jogger",
+        "https://www.ebay.co.uk/itm/1",
+        "https://www.depop.com/products/2",
+        "https://blog.example/joggers",
+    ]
+
+
 def test_parse_matches_handles_missing_results() -> None:
     assert parse_matches({}, "tank", limit=3) == []
     assert parse_matches({"visual_matches": None}, "tank", limit=3) == []
@@ -254,6 +322,7 @@ def test_serpapi_finder_uploads_the_crop_then_searches_google_lens() -> None:
     assert calls["params"]["engine"] == "google_lens"
     assert calls["params"]["image_id"] == "img-123"
     assert calls["params"]["type"] == "visual_matches"
+    assert calls["params"]["q"] == "ribbed tank top"
     assert [m.link for m in matches] == ["https://shop.example/tank"]
 
 
