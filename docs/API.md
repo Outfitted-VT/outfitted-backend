@@ -478,6 +478,20 @@ async function uploadImage(file: File) {
 
 `generated` is `true` for AI-generated images ([try-on](#virtual-try-on) results). **Label these in the UI** (e.g. an "AI try-on" badge), including in the feed when someone posts one.
 
+### Blur the faces in an image
+
+`POST /images/{image_id}/blur-faces` 🔒
+
+Makes a **copy** of one of your images with every face blurred, for example a try-on result someone wants to post without showing their face. No body. Takes a few seconds (a Gemini model finds the faces).
+
+- Post the returned image's `id` with [Post a fit](#post-a-fit) instead of the original. The original is unchanged.
+- The copy keeps `generated`, so a blurred try-on is still labeled as AI.
+- Each call makes a new copy: keep the result rather than calling again when the user toggles back and forth.
+
+**Responses:** `201` (an image object, as above) · `404` `{"detail": "Image not found"}` (doesn't exist or isn't yours) · `422` `{"detail": "No face found in this photo"}` · `503` `{"detail": "Face blurring is temporarily unavailable"}`.
+
+Only treat the face as hidden after a `201`.
+
 ---
 
 ## Virtual try-on
