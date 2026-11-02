@@ -4,6 +4,8 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import CurrentUser, PageCursor, PageLimit, SessionDep, StorageDep
 from app.core.pagination import InvalidCursorError
+from app.repositories import comment as comment_repository
+from app.schemas.comment import FitCommentCreate, FitCommentRead
 from app.schemas.error import ErrorResponse
 from app.schemas.fit import FitCreate, FitPrivacyUpdate, FitRead, FitUpdate
 from app.schemas.pagination import Page
@@ -243,3 +245,67 @@ def save(fit_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> None:
 def unsave(fit_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> None:
     """Idempotent."""
     _engagement_route(engagement_service.unsave_fit, fit_id, current_user, db)
+
+
+# --- Fit Comments ---
+
+@router.get(
+    "/{fit_id}/comments",
+    response_model=list[FitCommentRead],
+    summary="List comments for a fit",
+    responses=FIT_NOT_FOUND,
+)
+def list_comments(fit_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> list[FitCommentRead]:
+    try:
+        get_fit(db, fit_id)
+    except FitNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fit not found") from None
+    comments = comment_repository.list_comments(db, fit_id)
+    return [FitCommentRead.from_model(c) for c in comments]
+
+
+@router.post(
+    "/{fit_id}/comments",
+    response_model=FitCommentRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a comment to a fit",
+    responses=FIT_NOT_FOUND,
+)
+def add_comment(
+    fit_id: uuid.UUID,
+    data: FitCommentCreate,
+    current_user: CurrentUser,
+    db: SessionDep,
+) -> FitCommentRead:
+    try:
+        get_fit(db, fit_id)
+    except FitNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fit not found") from None
+    comment = comment_repository.add_comment(db, fit_id, current_user.id, data.content)
+    db.commit()
+    return FitCommentRead.from_model(comment)
+
+
+@router.delete(
+    "/{fit_id}/comments/{comment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a comment from a fit",
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "model": ErrorResponse,
+            "description": "Comment or fit not found, or not your comment.",
+            "content": {"application/json": {"example": {"detail": "Comment not found"}}},
+        }
+    },
+)
+def delete_comment(
+    fit_id: uuid.UUID,
+    comment_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: SessionDep,
+) -> None:
+    deleted = comment_repository.delete_comment(db, comment_id, current_user.id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found")
+    db.commit()
+

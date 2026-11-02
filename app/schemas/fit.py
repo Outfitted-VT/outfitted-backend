@@ -199,6 +199,7 @@ class FitRead(BaseModel):
     occasion_tags: list[str]
     style_tags: list[str]
     like_count: int
+    comment_count: int = 0
     liked_by_me: bool
     saved_by_me: bool
     privacy_tier: str = "public"
@@ -217,6 +218,7 @@ class FitRead(BaseModel):
             occasion_tags=fit.occasion_tags,
             style_tags=fit.style_tags,
             like_count=view.like_count,
+            comment_count=getattr(view, "comment_count", 0),
             liked_by_me=view.liked_by_me,
             saved_by_me=view.saved_by_me,
             privacy_tier=getattr(fit, "privacy_tier", "public"),
