@@ -11,7 +11,15 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     ENVIRONMENT: str = "development"
     API_V1_PREFIX: str = "/api/v1"
-    CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://172.31.10.71:5173",
+        "http://172.31.10.71:8000",
+        "capacitor://localhost",
+        "ionic://localhost",
+        "http://localhost",
+    ]
     DATABASE_URL: str = "sqlite:///./outfitted.db"
 
     # Uploaded files. MEDIA_BASE_URL is where clients load them from (a CDN/bucket URL later).
