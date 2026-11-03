@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.pagination import decode_cursor, encode_cursor
 from app.models.fit import Fit, FitImage, FitItem, FitTag
 from app.models.user import User
+from app.repositories import comment as comment_repository
 from app.repositories import engagement as engagement_repository
 from app.repositories import fit as fit_repository
 from app.schemas.fit import FitCreate, FitItemIn, FitUpdate
@@ -40,6 +41,7 @@ class FitView:
     like_count: int
     liked_by_me: bool
     saved_by_me: bool
+    comment_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -49,17 +51,19 @@ class FitPage:
 
 
 def describe_fits(db: Session, viewer: User, fits: list[Fit]) -> list[FitView]:
-    """Attach like counts and the viewer's likes/saves, in three queries for the whole list."""
+    """Attach like counts, comment counts, and the viewer's likes/saves, in four queries for the whole list."""
     fit_ids = [fit.id for fit in fits]
     if not fit_ids:
         return []
     counts = engagement_repository.like_counts(db, fit_ids)
+    comments = comment_repository.comment_counts(db, fit_ids)
     liked = engagement_repository.liked_fit_ids(db, viewer.id, fit_ids)
     saved = engagement_repository.saved_fit_ids(db, viewer.id, fit_ids)
     return [
         FitView(
             fit=fit,
             like_count=counts.get(fit.id, 0),
+            comment_count=comments.get(fit.id, 0),
             liked_by_me=fit.id in liked,
             saved_by_me=fit.id in saved,
         )
