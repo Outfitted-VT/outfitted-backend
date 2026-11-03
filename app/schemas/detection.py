@@ -3,7 +3,6 @@ import uuid
 from pydantic import BaseModel, ConfigDict
 
 from app.schemas.fit import FitItemIn
-from app.shopping import ProductMatch
 
 
 class DetectionCreate(BaseModel):
@@ -15,10 +14,7 @@ class DetectionCreate(BaseModel):
 
 
 class DetectedItem(FitItemIn):
-    """A suggested piece. `url` is the best shop match; `matches` are the alternatives, best
-    first. `POST /fits` ignores `matches`, so the item can be sent back as-is."""
-
-    matches: list[ProductMatch] = []
+    """A suggested piece. `url` is always empty: the user adds a shop link if they want one."""
 
 
 class DetectionRead(BaseModel):

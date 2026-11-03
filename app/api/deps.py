@@ -10,7 +10,6 @@ from app.models.user import User
 from app.faces import FaceLocator, get_face_locator
 from app.garments import GarmentDetector, get_garment_detector
 from app.services.user import get_user
-from app.shopping import ProductFinder, get_product_finder
 from app.storage import Storage, get_storage
 from app.tryon import TryOnGenerator, get_tryon_generator
 
@@ -18,7 +17,6 @@ SessionDep = Annotated[Session, Depends(get_db)]
 StorageDep = Annotated[Storage, Depends(get_storage)]
 TryOnGeneratorDep = Annotated[TryOnGenerator, Depends(get_tryon_generator)]
 GarmentDetectorDep = Annotated[GarmentDetector, Depends(get_garment_detector)]
-ProductFinderDep = Annotated[ProductFinder, Depends(get_product_finder)]
 FaceLocatorDep = Annotated[FaceLocator, Depends(get_face_locator)]
 
 # auto_error=False so a missing header returns our 401 instead of FastAPI's default 403.
