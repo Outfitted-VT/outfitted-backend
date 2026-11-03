@@ -4,6 +4,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from google.genai import errors
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.garments import (
@@ -14,7 +16,7 @@ from app.garments import (
     get_garment_detector,
 )
 from app.main import app
-from app.shopping import NoProductFinder, get_product_finder
+from app.models.detection import ImageDetection
 from tests.conftest import AuthedUser
 
 DETECTIONS_URL = "/api/v1/detections"
@@ -50,12 +52,6 @@ def use_detector(fake: FakeDetector) -> FakeDetector:
 @pytest.fixture
 def detector(client: TestClient) -> FakeDetector:
     return use_detector(FakeDetector())
-
-
-@pytest.fixture(autouse=True)
-def no_shop_matching(client: TestClient) -> None:
-    # Never make real (paid) SerpApi searches from tests, even if a key is in .env.
-    app.dependency_overrides[get_product_finder] = lambda: NoProductFinder()
 
 
 def detect(client: TestClient, user: AuthedUser, image_id: str):
@@ -95,7 +91,6 @@ def test_detection_suggests_items_and_tags(
         # The center of the box [ymin=200, xmin=300, ymax=600, xmax=700] out of 1000.
         "pin": {"image_id": image_id, "x": 0.5, "y": 0.4},
         "source": "detected",
-        "matches": [],
     }
     assert shorts["pin"] is None
     assert shorts["source"] == "detected"
@@ -147,6 +142,35 @@ def test_repeat_detection_is_cached(
     assert second.status_code == 200
     assert second.json() == first
     assert detector.calls == 1
+
+
+def test_stored_shop_links_from_the_old_search_are_dropped(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    detector: FakeDetector,
+    db: Session,
+) -> None:
+    # Detections stored while automatic shop search existed have a url and matches.
+    user = create_user()
+    image_id = upload_image(user)
+    detect(client, user, image_id)
+    stored = db.scalar(select(ImageDetection))
+    stored.result = {
+        **stored.result,
+        "items": [
+            {**item, "url": "https://shop.example/tank", "matches": [{"title": "Tank", "link": "https://shop.example/tank"}]}
+            for item in stored.result["items"]
+        ],
+    }
+    db.commit()
+
+    response = detect(client, user, image_id)
+
+    assert response.status_code == 200
+    for item in response.json()["items"]:
+        assert item["url"] is None
+        assert "matches" not in item
 
 
 def test_detection_rejects_someone_elses_image(
