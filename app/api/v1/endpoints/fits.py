@@ -9,8 +9,10 @@ from app.schemas.comment import FitCommentCreate, FitCommentRead
 from app.schemas.error import ErrorResponse
 from app.schemas.fit import FitCreate, FitPrivacyUpdate, FitRead, FitUpdate
 from app.schemas.pagination import Page
+from app.schemas.vote import FitVoteIn
 from app.services import engagement as engagement_service
 from app.services import follow as follow_service
+from app.services import vote as vote_service
 from app.services.fit import (
     FitNotFoundError,
     ImageAlreadyUsedError,
@@ -309,3 +311,39 @@ def delete_comment(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found")
     db.commit()
 
+
+@router.put(
+    "/{fit_id}/vote",
+    response_model=FitRead,
+    summary="Vote on a fit",
+    responses=FIT_NOT_FOUND,
+)
+def vote(
+    fit_id: uuid.UUID, data: FitVoteIn, current_user: CurrentUser, db: SessionDep
+) -> FitRead:
+    """Record your "wear it" or "rethink" verdict.
+
+    One vote per person per fit: voting again replaces your previous choice, so
+    this is idempotent. Returns the fit with the updated tallies, which saves the
+    client a second request to redraw the result bar.
+    """
+    try:
+        vote_service.cast_vote(db, current_user, fit_id, data.choice)
+    except FitNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fit not found") from None
+    return FitRead.from_view(describe_fit(db, current_user, get_fit(db, fit_id)))
+
+
+@router.delete(
+    "/{fit_id}/vote",
+    response_model=FitRead,
+    summary="Retract your vote on a fit",
+    responses=FIT_NOT_FOUND,
+)
+def unvote(fit_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> FitRead:
+    """Idempotent: retracting when you haven't voted does nothing."""
+    try:
+        vote_service.retract_vote(db, current_user, fit_id)
+    except FitNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fit not found") from None
+    return FitRead.from_view(describe_fit(db, current_user, get_fit(db, fit_id)))

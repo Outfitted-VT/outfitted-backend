@@ -685,12 +685,15 @@ Every endpoint that returns fits uses this shape:
   "like_count": 1,
   "liked_by_me": true,
   "saved_by_me": false,
+  "votes": { "wear": 9, "rethink": 3 },
+  "my_vote": "wear",
   "created_at": "2026-10-19T20:23:53.789725Z"
 }
 ```
 
 - `images` are in display order (first = cover).
-- `liked_by_me` / `saved_by_me` are for **the current user**.
+- `liked_by_me` / `saved_by_me` / `my_vote` are for **the current user**.
+- `votes` is the tally everyone sees; `my_vote` is `"wear"`, `"rethink"` or `null`. See [Voting](#voting).
 - **Item pins:** `x` and `y` are fractions (0–1) of the image's width and height, measured from the top-left. To draw a pin, position it at `left: x * 100%; top: y * 100%` over the image named by `pin.image_id`. Items without a pin have `pin: null`.
 - **Categories:** `top`, `bottom`, `dress`, `outerwear`, `shoes`, `bag`, `accessory`, `jewelry`, `headwear`, `other`.
 - **Item `source`:** `"detected"` if the item came from [Detect the pieces in a photo](#detect-the-pieces-in-a-photo), `"user"` if a person entered it.
@@ -844,6 +847,45 @@ async function toggleLike(fit: Fit) {
   setFit({ ...fit, liked_by_me: liked, like_count: fit.like_count + (liked ? 1 : -1) });
   const res = await apiFetch(`/fits/${fit.id}/like`, { method: liked ? "PUT" : "DELETE" });
   if (!res.ok) setFit(fit); // roll back
+}
+```
+
+---
+
+## Voting
+
+The "wear it or rethink" verdict on a fit — the quick yes/no a poster is asking
+their friends for.
+
+| Action | Request | Response |
+|---|---|---|
+| Vote | `PUT /fits/{fit_id}/vote` | `200` → [the fit object](#the-fit-object) |
+| Retract | `DELETE /fits/{fit_id}/vote` | `200` → [the fit object](#the-fit-object) |
+
+- Both 🔒. `404` `{"detail": "Fit not found"}` if the fit doesn't exist.
+- **Request body** (vote only): `{"choice": "wear"}` or `{"choice": "rethink"}`. Any
+  other value is a `422`.
+- **One vote per person per fit.** Voting again replaces your previous choice rather
+  than adding a second vote, so both calls are idempotent. Retracting when you never
+  voted is a no-op, not an error.
+- Unlike likes and saves, these return **the whole fit** instead of `204`, so you can
+  redraw the result bar from the authoritative tallies without a second request.
+- Anyone who can see a fit can vote on it, including its author.
+
+```ts
+// Optimistic vote, reconciled with the server's tallies
+async function vote(fit: Fit, choice: "wear" | "rethink" | null) {
+  const previous = fit;
+  setFit(optimisticVote(fit, choice));   // move the bar straight away
+  const res = await apiFetch(`/fits/${fit.id}/vote`, {
+    method: choice ? "PUT" : "DELETE",
+    ...(choice && {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ choice }),
+    }),
+  });
+  if (!res.ok) return setFit(previous);  // roll back
+  setFit(await res.json());              // real counts, including other people's
 }
 ```
 
