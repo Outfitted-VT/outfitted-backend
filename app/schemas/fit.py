@@ -14,6 +14,7 @@ from pydantic import (
 
 from app.schemas.image import ImageRead
 from app.schemas.user import OptionalText, UserSummary, UtcDatetime
+from app.schemas.vote import VoteChoice, VoteCounts
 
 MAX_IMAGES_PER_FIT = 10
 MAX_ITEMS_PER_FIT = 30
@@ -202,6 +203,8 @@ class FitRead(BaseModel):
     comment_count: int = 0
     liked_by_me: bool
     saved_by_me: bool
+    votes: VoteCounts = VoteCounts()
+    my_vote: VoteChoice | None = None
     privacy_tier: str = "public"
     allow_friend_try_on: bool = True
     created_at: UtcDatetime
@@ -221,6 +224,8 @@ class FitRead(BaseModel):
             comment_count=getattr(view, "comment_count", 0),
             liked_by_me=view.liked_by_me,
             saved_by_me=view.saved_by_me,
+            votes=VoteCounts(**getattr(view, "vote_counts", {})),
+            my_vote=getattr(view, "my_vote", None),
             privacy_tier=getattr(fit, "privacy_tier", "public"),
             allow_friend_try_on=getattr(fit, "allow_friend_try_on", True),
             created_at=fit.created_at,

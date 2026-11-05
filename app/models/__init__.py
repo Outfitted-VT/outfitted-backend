@@ -14,6 +14,7 @@ from app.models.refresh_token import RefreshToken
 from app.models.sizing import UserReferenceGarment
 from app.models.tryon import TryOn, TryOnPiece
 from app.models.user import User
+from app.models.vote import FitVote
 from app.models.wardrobe import WardrobeItem
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "FitLike",
     "FitSave",
     "FitTag",
+    "FitVote",
     "Follow",
     "Image",
     "ImageDetection",

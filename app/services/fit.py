@@ -1,7 +1,7 @@
 """Fit posts: creating, editing, deleting, and listing."""
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -12,6 +12,7 @@ from app.models.user import User
 from app.repositories import comment as comment_repository
 from app.repositories import engagement as engagement_repository
 from app.repositories import fit as fit_repository
+from app.repositories import vote as vote_repository
 from app.schemas.fit import FitCreate, FitItemIn, FitUpdate
 from app.services.image import get_owned_images
 from app.storage import Storage
@@ -42,6 +43,8 @@ class FitView:
     liked_by_me: bool
     saved_by_me: bool
     comment_count: int = 0
+    vote_counts: dict[str, int] = field(default_factory=dict)
+    my_vote: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,7 +54,8 @@ class FitPage:
 
 
 def describe_fits(db: Session, viewer: User, fits: list[Fit]) -> list[FitView]:
-    """Attach like counts, comment counts, and the viewer's likes/saves, in four queries for the whole list."""
+    """Attach like, comment and vote counts, and the viewer's likes/saves/vote,
+    in six queries for the whole list."""
     fit_ids = [fit.id for fit in fits]
     if not fit_ids:
         return []
@@ -59,6 +63,8 @@ def describe_fits(db: Session, viewer: User, fits: list[Fit]) -> list[FitView]:
     comments = comment_repository.comment_counts(db, fit_ids)
     liked = engagement_repository.liked_fit_ids(db, viewer.id, fit_ids)
     saved = engagement_repository.saved_fit_ids(db, viewer.id, fit_ids)
+    votes = vote_repository.vote_counts(db, fit_ids)
+    my_votes = vote_repository.votes_by_user(db, viewer.id, fit_ids)
     return [
         FitView(
             fit=fit,
@@ -66,6 +72,8 @@ def describe_fits(db: Session, viewer: User, fits: list[Fit]) -> list[FitView]:
             comment_count=comments.get(fit.id, 0),
             liked_by_me=fit.id in liked,
             saved_by_me=fit.id in saved,
+            vote_counts=votes.get(fit.id, {}),
+            my_vote=my_votes.get(fit.id),
         )
         for fit in fits
     ]
