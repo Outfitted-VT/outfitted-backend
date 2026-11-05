@@ -43,6 +43,11 @@ class TryOnCreate(BaseModel):
         max_length=len(PieceSlot),
         description="Pieces mode: one photo per slot (head, top, outerwear, ...).",
     )
+    fit_id: uuid.UUID | None = Field(
+        default=None,
+        description="\"Try this look\": the fit being copied. Its photos and its try-on's "
+        "clothing photos may then be used even though another user uploaded them.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={

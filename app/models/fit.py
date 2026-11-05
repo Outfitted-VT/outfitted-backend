@@ -6,6 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.db.mixins import TimestampMixin
 from app.models.image import Image
+from app.models.tryon import TryOn
 from app.models.user import User
 
 
@@ -28,8 +29,12 @@ class Fit(TimestampMixin, Base):
     privacy_tier: Mapped[str] = mapped_column(String(20), default="public", server_default="public")
     # Whether peers/friends can click "Try on" to drape this fit onto their avatar
     allow_friend_try_on: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # The try-on this fit's photo came from, if any. Its clothing photos let others "Try this
+    # look"; the try-on's person photo is never shared.
+    tryon_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tryons.id", ondelete="SET NULL"))
 
     author: Mapped[User] = relationship()
+    tryon: Mapped[TryOn | None] = relationship()
     fit_images: Mapped[list["FitImage"]] = relationship(
         order_by="FitImage.position", cascade="all, delete-orphan"
     )

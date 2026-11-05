@@ -644,3 +644,204 @@ def test_virtual_try_on_rejects_several_garments() -> None:
 
     with pytest.raises(TryOnUnsupportedError):
         generator.generate(b"person", [Garment(b"tee", "top"), Garment(b"shoes", "feet")])
+
+
+# --- "Try this look": posting a try-on and trying someone else's -------------------------
+
+
+def post_tryon_fit(client: TestClient, user: AuthedUser, tryon: dict, **fields) -> dict:
+    response = client.post(
+        FITS_URL,
+        headers=user.headers,
+        json={"image_ids": [tryon["result_image"]["id"]], "tryon_id": tryon["id"], **fields},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_posted_tryon_shares_its_clothes_but_not_the_person(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    poster = create_user("jane")
+    person, outfit = upload_image(poster), upload_image(poster)
+    tryon = try_on(client, poster, person, outfit).json()
+
+    fit = post_tryon_fit(client, poster, tryon)
+
+    assert fit["try_on_source"] == {
+        "mode": "outfit",
+        "outfit_image": tryon["outfit_image"],
+        "pieces": [],
+    }
+    assert person not in str(fit)
+
+
+def test_posted_pieces_tryon_shares_each_piece(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    poster = create_user("jane")
+    top, feet = upload_image(poster), upload_image(poster)
+    tryon = client.post(
+        TRYONS_URL,
+        headers=poster.headers,
+        json={
+            "person_image_id": upload_image(poster),
+            "pieces": [{"slot": "feet", "image_id": feet}, {"slot": "top", "image_id": top}],
+        },
+    ).json()
+
+    source = post_tryon_fit(client, poster, tryon)["try_on_source"]
+
+    assert source["mode"] == "pieces"
+    assert source["outfit_image"] is None
+    assert [(p["slot"], p["image"]["id"]) for p in source["pieces"]] == [("top", top), ("feet", feet)]
+
+
+def test_fit_without_a_tryon_has_no_source(
+    client: TestClient, create_user: Callable[..., AuthedUser], upload_image: Callable[[AuthedUser], str]
+) -> None:
+    user = create_user()
+
+    response = client.post(FITS_URL, headers=user.headers, json={"image_ids": [upload_image(user)]})
+
+    assert response.json()["try_on_source"] is None
+
+
+def test_cannot_post_with_someone_elses_tryon(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    poster, other = create_user("jane"), create_user("bob")
+    tryon = try_on(client, poster, upload_image(poster), upload_image(poster)).json()
+
+    response = client.post(
+        FITS_URL,
+        headers=other.headers,
+        json={"image_ids": [upload_image(other)], "tryon_id": tryon["id"]},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Try-on not found"}
+
+
+def test_try_this_look_uses_the_posters_clothes(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    poster, viewer = create_user("jane"), create_user("bob")
+    tryon = try_on(client, poster, upload_image(poster), upload_image(poster)).json()
+    fit = post_tryon_fit(client, poster, tryon)
+    outfit = fit["try_on_source"]["outfit_image"]["id"]
+
+    response = client.post(
+        TRYONS_URL,
+        headers=viewer.headers,
+        json={"person_image_id": upload_image(viewer), "outfit_image_id": outfit, "fit_id": fit["id"]},
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["outfit_image"]["id"] == outfit
+    assert len(generator.calls) == 2
+
+
+def test_try_this_look_can_use_a_normal_fits_photo(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    poster, viewer = create_user("jane"), create_user("bob")
+    photo = upload_image(poster)
+    fit = client.post(FITS_URL, headers=poster.headers, json={"image_ids": [photo]}).json()
+
+    response = client.post(
+        TRYONS_URL,
+        headers=viewer.headers,
+        json={"person_image_id": upload_image(viewer), "outfit_image_id": photo, "fit_id": fit["id"]},
+    )
+
+    assert response.status_code == 201, response.text
+
+
+def test_try_this_look_never_allows_the_posters_person_photo(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    poster, viewer = create_user("jane"), create_user("bob")
+    person = upload_image(poster)
+    tryon = try_on(client, poster, person, upload_image(poster)).json()
+    fit = post_tryon_fit(client, poster, tryon)
+    clothing = fit["try_on_source"]["outfit_image"]["id"]
+
+    as_clothing = client.post(
+        TRYONS_URL,
+        headers=viewer.headers,
+        json={"person_image_id": upload_image(viewer), "outfit_image_id": person, "fit_id": fit["id"]},
+    )
+    as_person = client.post(
+        TRYONS_URL,
+        headers=viewer.headers,
+        json={"person_image_id": clothing, "outfit_image_id": clothing, "fit_id": fit["id"]},
+    )
+
+    assert as_clothing.status_code == 400
+    assert as_person.status_code == 400
+    assert len(generator.calls) == 1
+
+
+def test_try_this_look_needs_the_fit_id(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    poster, viewer = create_user("jane"), create_user("bob")
+    tryon = try_on(client, poster, upload_image(poster), upload_image(poster)).json()
+    outfit = post_tryon_fit(client, poster, tryon)["try_on_source"]["outfit_image"]["id"]
+
+    response = try_on(client, viewer, upload_image(viewer), outfit)
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Image not found"}
+
+
+@pytest.mark.parametrize(
+    "fields", [{"allow_friend_try_on": False}, {"privacy_tier": "vault"}], ids=["off", "vault"]
+)
+def test_try_this_look_respects_the_posters_settings(
+    fields: dict,
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    poster, viewer = create_user("jane"), create_user("bob")
+    tryon = try_on(client, poster, upload_image(poster), upload_image(poster)).json()
+    fit = post_tryon_fit(client, poster, tryon, **fields)
+
+    response = client.post(
+        TRYONS_URL,
+        headers=viewer.headers,
+        json={
+            "person_image_id": upload_image(viewer),
+            "outfit_image_id": tryon["outfit_image"]["id"],
+            "fit_id": fit["id"],
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Try-ons are turned off for this fit"}
+    if not fields.get("allow_friend_try_on", True):
+        assert fit["try_on_source"] is None

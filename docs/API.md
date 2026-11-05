@@ -507,13 +507,14 @@ Puts clothes onto a photo of you, using a Google image model. There are two mode
 
 1. Upload the photos with [Upload an image](#upload-an-image): a photo of yourself, plus the outfit photo or each piece's photo.
 2. Call this endpoint. **It takes a while, often 10–30 seconds, and longer with more pieces**: show progress, and don't time out the request early.
-3. To post the result, [create a fit](#post-a-fit) with `result_image.id` in `image_ids`.
+3. To post the result, [create a fit](#post-a-fit) with `result_image.id` in `image_ids`, and `tryon_id` set to the try-on's `id` so others can [try the same look](#try-this-look).
 
 | Field | Required | Rules |
 |---|---|---|
 | `person_image_id` | yes | An image you uploaded. A clear photo of one person works best, ideally full-body. |
 | `outfit_image_id` | one of these two | Entire-fit mode. An image you uploaded. |
 | `pieces` | one of these two | Pieces mode. 1–7 items of `{ "slot": ..., "image_id": ... }`. |
+| `fit_id` | no | [Try this look](#try-this-look): the fit being copied. Its clothing photos may then be used even though someone else uploaded them. |
 
 **Entire fit:**
 
@@ -592,7 +593,8 @@ In pieces mode, `outfit_image` is `null` and `pieces` lists what was used, head 
 
 | Status | `detail` | What to do |
 |---|---|---|
-| `400` | `"Image not found"` | An id doesn't exist or isn't yours. |
+| `400` | `"Image not found"` | An id doesn't exist or isn't yours (or, with `fit_id`, isn't one of that fit's clothing photos). |
+| `403` | `"Try-ons are turned off for this fit"` | With `fit_id`: the poster turned off try-ons for it, or it's in their vault. |
 | `400` | `"Try-on can only use one photo right now. Choose 'Entire fit' instead."` | The server's configured model can't combine pieces. Only happens if the backend is switched to the older `virtual-try-on-001` model. |
 | `422` | validation `detail` list | Both or neither of `outfit_image_id`/`pieces`, a repeated slot or image, `one_piece` with `top`/`bottom`, or an unknown slot. |
 | `422` | `"We couldn't create a try-on from these photos"` | The model refused the photos (safety filters) or didn't return an image. Suggest different photos. |
@@ -625,6 +627,16 @@ if (res.status === 201) {
   const { detail } = await res.json(); // see the table above
 }
 ```
+
+### Try this look
+
+Lets a viewer try a posted fit's clothes on themselves.
+
+1. **Posting a try-on:** send `tryon_id` with [Post a fit](#post-a-fit). The fit then has a `try_on_source` (see [the fit object](#the-fit-object)) with the try-on's clothing photos: the outfit photo, or each piece and its slot. **The poster's own photo is never shared.**
+2. **Trying it:** open the try-on screen with those clothing photos already filled in (`try_on_source.mode` picks Entire fit or Pieces). For a fit with no `try_on_source`, use its cover photo as the outfit. The viewer adds their own photo.
+3. Call [Generate a try-on](#generate-a-try-on) with those image ids and `fit_id` set to the fit's id. The viewer can still swap any piece for a photo of their own.
+
+`try_on_source` is `null` when the fit didn't come from a try-on or the poster turned off `allow_friend_try_on`. Calls with `fit_id` are refused (`403`) when try-ons are off or the fit is in the poster's vault.
 
 ---
 
@@ -687,6 +699,7 @@ Every endpoint that returns fits uses this shape:
   "saved_by_me": false,
   "votes": { "wear": 9, "rethink": 3 },
   "my_vote": "wear",
+  "try_on_source": null,
   "created_at": "2026-10-19T20:23:53.789725Z"
 }
 ```
@@ -694,6 +707,7 @@ Every endpoint that returns fits uses this shape:
 - `images` are in display order (first = cover).
 - `liked_by_me` / `saved_by_me` / `my_vote` are for **the current user**.
 - `votes` is the tally everyone sees; `my_vote` is `"wear"`, `"rethink"` or `null`. See [Voting](#voting).
+- `try_on_source` is set when the fit was posted from a try-on and its author allows try-ons: `{ "mode": "outfit" | "pieces", "outfit_image": image | null, "pieces": [{ "slot", "image" }] }`, the same shapes as a try-on's. See [Try this look](#try-this-look).
 - **Item pins:** `x` and `y` are fractions (0–1) of the image's width and height, measured from the top-left. To draw a pin, position it at `left: x * 100%; top: y * 100%` over the image named by `pin.image_id`. Items without a pin have `pin: null`.
 - **Categories:** `top`, `bottom`, `dress`, `outerwear`, `shoes`, `bag`, `accessory`, `jewelry`, `headwear`, `other`.
 - **Item `source`:** `"detected"` if the item came from [Detect the pieces in a photo](#detect-the-pieces-in-a-photo), `"user"` if a person entered it.
@@ -714,6 +728,7 @@ Every endpoint that returns fits uses this shape:
 | `items` | no | Up to 30. See below. |
 | `occasion_tags` | no | Up to 10, each 1–30 characters. Stored lowercase; duplicates are dropped. |
 | `style_tags` | no | Same rules. |
+| `tryon_id` | no | Posting a try-on: the try-on's `id`, so others can [try this look](#try-this-look). Must be one of your try-ons, or `400 "Try-on not found"`. |
 
 **Item fields:** `category` (required, one of the categories above), `name` (required, 1–100 chars), `brand` (≤100), `color`, `pattern`, `material`, `silhouette` (each ≤50), `url` (a valid `http(s)` link), `pin` (`{ image_id, x, y }` where `image_id` is one of this fit's `image_ids` and `x`/`y` are 0–1), `source` (`"user"`, the default, or `"detected"`; keep `"detected"` when the user edits a detected item).
 

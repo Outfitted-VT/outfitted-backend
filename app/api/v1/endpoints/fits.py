@@ -18,6 +18,7 @@ from app.services.fit import (
     ImageAlreadyUsedError,
     InvalidItemPinError,
     NotFitOwnerError,
+    TryOnNotFoundError,
     create_fit,
     delete_fit,
     describe_fit,
@@ -68,11 +69,16 @@ def post_fit(data: FitCreate, current_user: CurrentUser, db: SessionDep) -> FitR
     - **caption**: optional, up to 2200 characters.
     - **items**: up to 30 tagged pieces. `pin` is optional and must reference one of
       this fit's `image_ids`; `x`/`y` are fractions (0-1) of the image's width/height.
+    - **tryon_id**: when posting a try-on, the try-on it came from. Others can then "Try
+      this look" with the same clothes (see `try_on_source`). `400 Try-on not found` if it
+      isn't one of your try-ons.
     """
     try:
         fit = create_fit(db, current_user, data)
     except ImageNotFoundError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image not found") from None
+    except TryOnNotFoundError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Try-on not found") from None
     except ImageAlreadyUsedError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Image is already used in another fit"

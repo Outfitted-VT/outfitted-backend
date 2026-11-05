@@ -13,6 +13,7 @@ from pydantic import (
 )
 
 from app.schemas.image import ImageRead
+from app.schemas.tryon import TryOnPieceRead
 from app.schemas.user import OptionalText, UserSummary, UtcDatetime
 from app.schemas.vote import VoteChoice, VoteCounts
 
@@ -134,6 +135,11 @@ class FitCreate(BaseModel):
     style_tags: Tags = Field(default=[], description='The style, e.g. "streetwear".')
     privacy_tier: Literal["public", "close_friends", "vault"] = "public"
     allow_friend_try_on: bool = True
+    tryon_id: uuid.UUID | None = Field(
+        default=None,
+        description="Posting a try-on: the try-on it came from (`POST /tryons`), so others "
+        "can try the same clothes. Must be your own try-on.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -191,6 +197,30 @@ class FitUpdate(BaseModel):
         return values
 
 
+class TryOnSource(BaseModel):
+    """The clothes from the try-on a fit was posted from, for "Try this look". Never includes
+    the poster's own photo."""
+
+    mode: Literal["outfit", "pieces"]
+    # Whole-outfit mode only.
+    outfit_image: ImageRead | None
+    # Pieces mode only, head to toe. Pieces whose photo was deleted are left out.
+    pieces: list[TryOnPieceRead]
+
+    @classmethod
+    def of(cls, fit) -> "TryOnSource | None":
+        """None unless the fit came from a try-on and its author allows try-ons of it."""
+        tryon = fit.tryon
+        if tryon is None or not fit.allow_friend_try_on:
+            return None
+        pieces = [TryOnPieceRead.model_validate(p) for p in tryon.pieces if p.image is not None]
+        if tryon.pieces:
+            return cls(mode="pieces", outfit_image=None, pieces=pieces) if pieces else None
+        if tryon.outfit_image is None:
+            return None
+        return cls(mode="outfit", outfit_image=ImageRead.model_validate(tryon.outfit_image), pieces=[])
+
+
 class FitRead(BaseModel):
     id: uuid.UUID
     author: UserSummary
@@ -207,6 +237,7 @@ class FitRead(BaseModel):
     my_vote: VoteChoice | None = None
     privacy_tier: str = "public"
     allow_friend_try_on: bool = True
+    try_on_source: TryOnSource | None = None
     created_at: UtcDatetime
 
     @classmethod
@@ -228,6 +259,7 @@ class FitRead(BaseModel):
             my_vote=getattr(view, "my_vote", None),
             privacy_tier=getattr(fit, "privacy_tier", "public"),
             allow_friend_try_on=getattr(fit, "allow_friend_try_on", True),
+            try_on_source=TryOnSource.of(fit),
             created_at=fit.created_at,
         )
 
