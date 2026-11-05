@@ -17,6 +17,7 @@ def with_details(statement: Select) -> Select:
         selectinload(Fit.fit_images),
         selectinload(Fit.items),
         selectinload(Fit.tags),
+        selectinload(Fit.tryon),
     )
 
 

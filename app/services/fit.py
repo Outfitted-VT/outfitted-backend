@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.pagination import decode_cursor, encode_cursor
 from app.models.fit import Fit, FitImage, FitItem, FitTag
+from app.models.tryon import TryOn
 from app.models.user import User
 from app.repositories import comment as comment_repository
 from app.repositories import engagement as engagement_repository
@@ -28,6 +29,10 @@ class NotFitOwnerError(Exception):
 
 class ImageAlreadyUsedError(Exception):
     pass
+
+
+class TryOnNotFoundError(Exception):
+    """The fit's tryon_id isn't one of the author's try-ons."""
 
 
 class InvalidItemPinError(Exception):
@@ -138,16 +143,21 @@ def _get_own_fit(db: Session, editor: User, fit_id: uuid.UUID) -> Fit:
 
 def create_fit(db: Session, author: User, data: FitCreate) -> Fit:
     """Raises ImageNotFoundError if an image isn't the author's, ImageAlreadyUsedError if
-    an image is already in another fit."""
+    an image is already in another fit, TryOnNotFoundError if tryon_id isn't the author's."""
     images = get_owned_images(db, author, data.image_ids)
     if fit_repository.used_image_ids(db, data.image_ids):
         raise ImageAlreadyUsedError
+    if data.tryon_id is not None:
+        tryon = db.get(TryOn, data.tryon_id)
+        if tryon is None or tryon.user_id != author.id:
+            raise TryOnNotFoundError
 
     fit = Fit(
         user_id=author.id,
         caption=data.caption,
         privacy_tier=getattr(data, "privacy_tier", "public"),
         allow_friend_try_on=getattr(data, "allow_friend_try_on", True),
+        tryon_id=data.tryon_id,
         fit_images=[FitImage(image=image, position=i) for i, image in enumerate(images)],
         items=_build_items(data.items),
         tags=_build_tags(data.occasion_tags, data.style_tags),

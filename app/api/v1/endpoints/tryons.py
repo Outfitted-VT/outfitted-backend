@@ -4,7 +4,7 @@ from app.api.deps import CurrentUser, SessionDep, StorageDep, TryOnGeneratorDep
 from app.schemas.error import ErrorResponse
 from app.schemas.tryon import TryOnCreate, TryOnRead
 from app.services.image import ImageNotFoundError
-from app.services.tryon import DailyLimitReachedError, create_tryon
+from app.services.tryon import DailyLimitReachedError, FitTryOnNotAllowedError, create_tryon
 from app.tryon import TryOnBlockedError, TryOnUnavailableError, TryOnUnsupportedError
 
 router = APIRouter()
@@ -78,6 +78,10 @@ def create(
         tryon = create_tryon(db, storage, generator, current_user, tryon_in)
     except ImageNotFoundError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image not found") from None
+    except FitTryOnNotAllowedError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Try-ons are turned off for this fit"
+        ) from None
     except TryOnUnsupportedError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from None
     except DailyLimitReachedError:
