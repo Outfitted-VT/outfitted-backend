@@ -404,6 +404,12 @@ Send **only the fields you want to change**. Omitted fields stay the same. Send 
 | `full_name` | Up to 100 characters. |
 | `bio` | Up to 160 characters. |
 | `avatar_image_id` | An image `id` from [Upload an image](#upload-an-image). |
+| `style_tags` | Up to 3 of `minimal`, `tailored`, `streetwear`, `y2k`, `romantic`, `sporty`. |
+| `fit_preference` | `fitted`, `true`, or `relaxed`. |
+| `top_size`, `bottom_size` | `XS`, `S`, `M`, `L`, or `XL` (US sizing). |
+| `feedback_tone` | How your circle should talk to you: `honest`, `kind`, or `hype`. |
+
+The style profile fields come from the onboarding quiz and are returned by `GET /users/me`.
 
 ```json
 { "bio": "Thrift addict", "avatar_image_id": "517830fe-d102-41c1-84b5-f7036e814611" }
@@ -923,6 +929,104 @@ All 🔒. Users in follower/following lists have the compact shape:
 ```
 
 To show a Follow/Following button for someone, read `is_following` from [Get a profile](#get-a-profile).
+
+---
+
+## Messaging
+
+Direct chats and circles (group chats). Every endpoint is 🔒 and only works for members:
+anyone else gets `404 {"detail": "Conversation not found"}`.
+
+### Your circle
+
+People you follow or who follow you. Chats can only be started with them.
+
+- `GET /conversations/circle` → `[{ "user", "online", "last_seen_at", "has_live_fit_check" }]`
+  (`has_live_fit_check`: posted a fit in the last 24 hours).
+- `GET /users/search?q=&scope=circle` searches only your circle. Without `scope` it searches everyone.
+- `GET /users/suggestions?limit=6` → people you don't follow, most mutual follows first, each with `mutual_count`.
+
+### Conversations
+
+| Action | Request | Response |
+|---|---|---|
+| List | `GET /conversations` | `200` → conversations, most recent activity first |
+| Start | `POST /conversations` `{"type": "direct" \| "circle", "member_ids": [...], "title": null}` | `201` new, or `200` an existing direct chat |
+| Get one | `GET /conversations/{id}` | `200` |
+| Mute / rename | `PATCH /conversations/{id}` `{"muted": true}` or `{"title": "..."}` (circles only) | `200` |
+| Leave / hide | `DELETE /conversations/{id}` | `204`: leaves a circle; hides a direct chat until its next message |
+| Mark read | `POST /conversations/{id}/read` | `200` receipt |
+| Mark delivered | `POST /conversations/{id}/delivered` | `200` receipt |
+
+A conversation:
+
+```json
+{
+  "id": "...", "type": "circle", "title": "Gallery night", "created_at": "...",
+  "muted": false, "unread_count": 2, "last_activity_at": "...",
+  "members": [{ "user": { "id": "...", "username": "maya", "full_name": "Maya Chen", "avatar": null },
+                "role": "member", "online": true, "last_seen_at": "...",
+                "last_read_at": "...", "last_delivered_at": "..." }],
+  "last_message": { "...": "a message" }
+}
+```
+
+`member_ids` excludes you. A direct chat has exactly one; a circle up to 31. Members must be in
+your circle (`403` otherwise).
+
+### Messages
+
+`GET /conversations/{id}/messages?before=<next_cursor>&limit=30` → `{ "items", "next_cursor" }`, newest first.
+
+`POST /conversations/{id}/messages`:
+
+| `kind` | Fields |
+|---|---|
+| `text` | `body` (1-2000 characters) |
+| `image` | `image_id` from [Upload an image](#upload-an-image) (10 MB cap), optional `body` |
+| `fit_check` | `image_id`, `question` (up to 280), optional `context` ("Vernissage · 18°C") and `fit_id` |
+| `product` | `product: { name, color, price, url, image_id }`, optional `body` |
+
+Also send a `client_id` (any string up to 64 characters): retrying with the same one returns the
+stored message instead of sending twice. Text is trimmed and stripped of control and invisible
+characters. Sending more than 20 messages in 10 seconds returns `429`.
+
+A message:
+
+```json
+{
+  "id": "...", "conversation_id": "...", "sender": { "...": "user summary" },
+  "kind": "fit_check", "body": "Too dressed up?", "client_id": "c-123",
+  "payload": { "image": { "...": "image" }, "question": "Too dressed up?", "context": "Vernissage · 18°C", "fit_id": null },
+  "votes": { "wear": 2, "rethink": 1, "total": 3, "wear_pct": 67, "rethink_pct": 33, "my_vote": "wear" },
+  "created_at": "...", "edited_at": null, "deleted_at": null
+}
+```
+
+- `POST /messages/{id}/vote` `{"vote": "wear" | "rethink"}` → the new tally. One vote per member; voting again replaces it.
+- `DELETE /messages/{id}` → `204`. Sender only (`403` otherwise). The message stays with `deleted_at` set and `body`/`payload` cleared.
+
+**Delivery and read state** of your own messages: compare a message's `created_at` with the other
+members' `last_delivered_at` and `last_read_at`.
+
+### Realtime
+
+Open a WebSocket to `/api/v1/ws` and send `{"type": "auth", "token": "<access token>"}` first
+(within 10 seconds; a bad token closes with code `4401`). After `{"type": "ready"}` the server pushes:
+
+| Event | Fields |
+|---|---|
+| `message:new` | `message` |
+| `message:deleted` | `conversation_id`, `message_id` |
+| `vote:update` | `message_id`, `conversation_id`, tallies |
+| `receipt:update` | `conversation_id`, `user_id`, `last_read_at`, `last_delivered_at` |
+| `typing:start` / `typing:stop` | `conversation_id`, `user_id` |
+| `presence:update` | `user_id`, `online`, `last_seen_at` |
+| `conversation:update` | `conversation_id` (created, renamed, someone left): refetch it |
+
+Send `{"type": "typing:start" | "typing:stop", "conversation_id": "..."}` and `{"type": "ping"}`
+(answered with `pong`). Reconnect with a fresh token after it expires. Events go to sockets on the
+same server process, so run one worker (or add a shared broker) until that changes.
 
 ---
 

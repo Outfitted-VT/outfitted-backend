@@ -34,6 +34,7 @@ TAGS_METADATA = [
     {"name": "users", "description": "Your account, public profiles, and follows."},
     {"name": "images", "description": "Upload images for fits and avatars."},
     {"name": "fits", "description": "Outfit posts, feeds, likes, and saves."},
+    {"name": "conversations", "description": "Direct chats and circles: messages, receipts, fit checks."},
     {"name": "health", "description": "Service and database status."},
 ]
 

@@ -1,7 +1,7 @@
 import re
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, field_validator
 
@@ -10,7 +10,7 @@ from app.schemas.image import ImageRead
 USERNAME_PATTERN = re.compile(r"^[a-z0-9_.]{3,30}$")
 # Names that would clash with routes (/users/me) or be used to impersonate staff.
 RESERVED_USERNAMES = {
-    "me", "search", "admin", "administrator", "api", "auth", "explore", "feed", "help", "login",
+    "me", "search", "suggestions", "admin", "administrator", "api", "auth", "explore", "feed", "help", "login",
     "logout", "outfitted", "root", "settings", "signup", "staff", "support", "system",
 }
 
@@ -45,6 +45,11 @@ def _assume_utc(value: datetime) -> datetime:
 
 UtcDatetime = Annotated[datetime, AfterValidator(_assume_utc)]
 
+StyleTag = Literal["minimal", "tailored", "streetwear", "y2k", "romantic", "sporty"]
+FitPreference = Literal["fitted", "true", "relaxed"]
+Size = Literal["XS", "S", "M", "L", "XL"]
+FeedbackTone = Literal["honest", "kind", "hype"]
+
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -78,6 +83,16 @@ class UserUpdate(BaseModel):
     full_name: Annotated[str | None, Field(max_length=100), OptionalText] = None
     bio: Annotated[str | None, Field(max_length=160), OptionalText] = None
     avatar_image_id: uuid.UUID | None = None
+    style_tags: list[StyleTag] | None = Field(default=None, max_length=3)
+    fit_preference: FitPreference | None = None
+    top_size: Size | None = None
+    bottom_size: Size | None = None
+    feedback_tone: FeedbackTone | None = None
+
+    @field_validator("style_tags")
+    @classmethod
+    def unique_style_tags(cls, tags: list[str] | None) -> list[str] | None:
+        return list(dict.fromkeys(tags)) if tags is not None else None
 
     @field_validator("username")
     @classmethod
@@ -106,6 +121,12 @@ class UserSearchResult(UserSummary):
     is_following: bool = False
 
 
+class UserSuggestion(UserSummary):
+    """Someone you might want in your circle."""
+
+    mutual_count: int = Field(description="People you follow who follow them.")
+
+
 class UserRead(UserSummary):
     """Your own account, including private fields like email."""
 
@@ -113,6 +134,16 @@ class UserRead(UserSummary):
     bio: str | None
     is_active: bool
     created_at: UtcDatetime
+    style_tags: list[str] = []
+    fit_preference: str | None = None
+    top_size: str | None = None
+    bottom_size: str | None = None
+    feedback_tone: str | None = None
+
+    @field_validator("style_tags", mode="before")
+    @classmethod
+    def none_to_empty(cls, tags: list[str] | None) -> list[str]:
+        return tags or []
 
 
 class ProfileRead(UserSummary):

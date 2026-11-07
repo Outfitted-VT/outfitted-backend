@@ -2,6 +2,7 @@
 # Alembic imports this package to autogenerate migrations.
 from app.db.base import Base
 from app.models.comment import FitComment
+from app.models.conversation import Conversation, ConversationMember, FitCheckVote, Message
 from app.models.detection import ImageDetection
 from app.models.engagement import FitLike, FitSave
 from app.models.fit import Fit, FitImage, FitItem, FitTag
@@ -19,9 +20,12 @@ from app.models.wardrobe import WardrobeItem
 
 __all__ = [
     "Base",
+    "Conversation",
+    "ConversationMember",
     "DirectMessage",
     "Fit",
     "FitComment",
+    "FitCheckVote",
     "FitImage",
     "FitItem",
     "FitLike",
@@ -31,6 +35,7 @@ __all__ = [
     "Follow",
     "Image",
     "ImageDetection",
+    "Message",
     "OutfitMemory",
     "RefreshToken",
     "ReturnImpactRecord",

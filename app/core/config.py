@@ -11,13 +11,25 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     ENVIRONMENT: str = "development"
     API_V1_PREFIX: str = "/api/v1"
-    CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "capacitor://localhost",
+        "ionic://localhost",
+        "https://localhost",
+        "http://localhost",
+    ]
     DATABASE_URL: str = "sqlite:///./outfitted.db"
 
     # Uploaded files. MEDIA_BASE_URL is where clients load them from (a CDN/bucket URL later).
     MEDIA_ROOT: str = "media"
     MEDIA_BASE_URL: str = "http://localhost:8000/media"
     MAX_UPLOAD_BYTES: int = 10 * 1024 * 1024
+
+    MESSAGE_MAX_LENGTH: int = 2000
+    MESSAGE_SEND_LIMIT: int = 20
+    MESSAGE_SEND_WINDOW_SECONDS: int = 10
+    CIRCLE_MAX_MEMBERS: int = 32
 
     SECRET_KEY: str = INSECURE_DEV_SECRET_KEY
     JWT_ALGORITHM: str = "HS256"

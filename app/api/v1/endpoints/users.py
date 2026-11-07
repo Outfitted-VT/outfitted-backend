@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import CurrentUser, PageCursor, PageLimit, SessionDep
@@ -5,12 +7,12 @@ from app.core.pagination import InvalidCursorError
 from app.schemas.error import ErrorResponse
 from app.schemas.fit import FitRead
 from app.schemas.pagination import Page
-from app.schemas.user import ProfileRead, UserPrivacySettingsRead, UserPrivacySettingsUpdate, UserRead, UserSearchResult, UserSummary, UserUpdate
+from app.schemas.user import ProfileRead, UserPrivacySettingsRead, UserPrivacySettingsUpdate, UserRead, UserSearchResult, UserSuggestion, UserSummary, UserUpdate
 from app.services.engagement import list_saved_fits
 from app.services import follow as follow_service
 from app.services.fit import list_fits
 from app.services.image import ImageNotFoundError
-from app.services.user import UsernameTakenError, get_user_by_username, search_users as search_users_service, update_privacy_settings, update_profile
+from app.services.user import UsernameTakenError, get_user_by_username, search_users as search_users_service, suggest_users, update_privacy_settings, update_profile
 
 router = APIRouter()
 
@@ -137,9 +139,24 @@ def search_users(
     db: SessionDep,
     q: str = "",
     limit: PageLimit = 20,
+    scope: Literal["all", "circle"] = "all",
 ) -> list[UserSearchResult]:
-    """Search users by username or full name."""
-    return search_users_service(db, current_user, query=q, limit=limit)
+    """
+    Search users by username or full name. `scope=circle` limits results to people you follow
+    or who follow you, for starting a chat.
+    """
+    return search_users_service(db, current_user, query=q, limit=limit, circle_only=scope == "circle")
+
+
+@router.get(
+    "/suggestions",
+    response_model=list[UserSuggestion],
+    summary="Suggested people to add to your circle",
+    responses=UNAUTHORIZED_RESPONSE,
+)
+def read_suggestions(current_user: CurrentUser, db: SessionDep, limit: PageLimit = 6) -> list[UserSuggestion]:
+    """People you don't follow yet, most mutual follows first."""
+    return suggest_users(db, current_user, limit=limit)
 
 
 @router.get(
