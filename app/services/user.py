@@ -12,6 +12,7 @@ from app.models.user import User
 from app.repositories import user as user_repository
 from app.schemas.image import ImageRead
 from app.schemas.user import UserCreate, UserPrivacySettingsUpdate, UserSearchResult, UserSuggestion, UserUpdate
+from app.services import streak as streak_service
 from app.services.image import get_owned_images
 
 
@@ -83,8 +84,10 @@ def update_profile(db: Session, user: User, changes: UserUpdate) -> User:
             [user.avatar] = get_owned_images(db, user, [changes.avatar_image_id])
     for field in STYLE_PROFILE_FIELDS & fields:
         setattr(user, field, getattr(changes, field))
-    if "timezone" in fields and changes.timezone is not None:
-        user.timezone = changes.timezone
+    if "timezone" in fields and changes.timezone is not None and changes.timezone != user.timezone:
+        old_timezone, user.timezone = user.timezone, changes.timezone
+        # Streak dates are stored in the old timezone's calendar; move them to the new one.
+        streak_service.rebase_timezone(db, user, old_timezone)
 
     try:
         db.commit()

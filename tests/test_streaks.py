@@ -243,3 +243,112 @@ def test_unknown_stored_timezone_falls_back_to_utc(db, user) -> None:
     streaks.record_activity(db, user, datetime(2026, 6, 1, 23, tzinfo=UTC))
 
     assert view(db, user, datetime(2026, 6, 2, 0, 30, tzinfo=UTC)).active_today is False
+
+
+def utc(year, month, day, hour=12, minute=0) -> datetime:
+    return datetime(year, month, day, hour, minute, tzinfo=UTC)
+
+
+def set_timezone(client: TestClient, db: Session, who: AuthedUser, name: str, now: datetime, monkeypatch) -> User:
+    """PATCH /users/me with the server clock frozen at `now`."""
+    monkeypatch.setattr(streaks, "utcnow", lambda: now)
+    response = client.patch(f"{USERS_URL}/me", headers=who.headers, json={"timezone": name})
+    assert response.status_code == 200, response.text
+    user = db.get(User, who.id)
+    db.refresh(user)
+    return user
+
+
+def test_story_then_timezone_change_still_counts_today(client, db, jane, upload_image, monkeypatch) -> None:
+    # The reported bug: account is UTC, posts a story at 02:00 UTC (21:00 the day before in New York),
+    # then the app sets America/New_York.
+    monkeypatch.setattr(streaks, "utcnow", lambda: utc(2026, 11, 10, 2))
+    response = client.post("/api/v1/stories", headers=jane.headers, json={"image_id": upload_image(jane)})
+    assert response.status_code in (200, 201), response.text
+
+    set_timezone(client, db, jane, "America/New_York", utc(2026, 11, 10, 2, 5), monkeypatch)
+
+    streak = client.get(f"{USERS_URL}/me/streak", headers=jane.headers).json()
+    assert (streak["current"], streak["active_today"]) == (1, True)
+
+
+def test_utc_to_new_york_after_utc_midnight(client, db, jane, monkeypatch) -> None:
+    utc_user = db.get(User, jane.id)
+    streaks.record_activity(db, utc_user, utc(2026, 11, 9, 1))  # UTC day 11-09
+    streaks.record_activity(db, utc_user, utc(2026, 11, 10, 2))  # UTC day 11-10 = NY 11-09 21:00
+    assert view(db, utc_user, utc(2026, 11, 10, 2, 1)).current == 2
+
+    user = set_timezone(client, db, jane, "America/New_York", utc(2026, 11, 10, 2, 5), monkeypatch)
+
+    now = at(2026, 11, 9, 21, 30)
+    streak = view(db, user, now)
+    assert (streak.current, streak.active_today) == (2, True)
+    streaks.record_activity(db, user, at(2026, 11, 9, 23, 59))  # same NY day: no double count
+    assert view(db, user, at(2026, 11, 9, 23, 59)).current == 2
+
+    next_day = view(db, user, at(2026, 11, 10, 0, 0))
+    assert (next_day.current, next_day.active_today) == (2, False)
+    streaks.record_activity(db, user, at(2026, 11, 10, 8))
+    assert (view(db, user, at(2026, 11, 10, 8)).current, kinds(db, user)) == (3, ["streak_milestone"])
+
+
+def test_utc_to_new_york_does_not_break_an_open_day(client, db, jane, monkeypatch) -> None:
+    # Last counted at 01:00 UTC on 11-09 (20:00 NY on 11-08). It's 23:00 UTC on 11-10 and today isn't
+    # counted yet. Re-reading that instant in New York would leave a 2-day gap; the streak must survive.
+    utc_user = db.get(User, jane.id)
+    streaks.record_activity(db, utc_user, utc(2026, 11, 8, 12))
+    streaks.record_activity(db, utc_user, utc(2026, 11, 9, 1))
+
+    user = set_timezone(client, db, jane, "America/New_York", utc(2026, 11, 10, 23), monkeypatch)
+
+    streak = view(db, user, utc(2026, 11, 10, 23, 30))
+    assert (streak.current, streak.active_today) == (2, False)
+    assert streaks.check_lapsed(db, utc(2026, 11, 11, 0, 1)) == 0
+    streaks.record_activity(db, user, at(2026, 11, 10, 22))
+    assert view(db, user, at(2026, 11, 10, 22)).current == 3
+    assert "streak_lost" not in kinds(db, user)
+
+
+def test_new_york_to_utc_after_utc_midnight(client, db, jane, user, monkeypatch) -> None:
+    streaks.record_activity(db, user, at(2026, 11, 8, 12))
+    streaks.record_activity(db, user, at(2026, 11, 9, 23, 30))  # NY 11-09 = 04:30 UTC on 11-10
+
+    user = set_timezone(client, db, jane, "UTC", utc(2026, 11, 10, 4, 35), monkeypatch)
+
+    streak = view(db, user, utc(2026, 11, 10, 5))
+    assert (streak.current, streak.active_today) == (2, True)
+    streaks.record_activity(db, user, utc(2026, 11, 10, 18))  # same UTC day: no double count
+    assert view(db, user, utc(2026, 11, 10, 18)).current == 2
+
+    next_day = view(db, user, utc(2026, 11, 11, 0))
+    assert (next_day.current, next_day.active_today) == (2, False)
+    streaks.record_activity(db, user, utc(2026, 11, 11, 9))
+    assert view(db, user, utc(2026, 11, 11, 9)).current == 3
+
+
+def test_new_york_to_utc_before_utc_midnight(client, db, jane, user, monkeypatch) -> None:
+    # Active on NY 11-09 at 18:00, switched to UTC at 23:30 UTC (still 11-09 in both): nothing moves.
+    streaks.record_activity(db, user, at(2026, 11, 8, 12))
+    streaks.record_activity(db, user, at(2026, 11, 9, 18))
+
+    user = set_timezone(client, db, jane, "UTC", utc(2026, 11, 9, 23, 30), monkeypatch)
+
+    assert view(db, user, utc(2026, 11, 9, 23, 45)).active_today is True
+    after_midnight = view(db, user, utc(2026, 11, 10, 0, 30))
+    assert (after_midnight.current, after_midnight.active_today) == (2, False)
+    streaks.record_activity(db, user, utc(2026, 11, 10, 0, 30))
+    assert view(db, user, utc(2026, 11, 10, 0, 30)).current == 3
+
+
+def test_timezone_change_keeps_reminder_and_freeze_dates_in_step(client, db, jane, user, monkeypatch) -> None:
+    active_days(db, user, at(2026, 11, 1, 12), 7)  # 11-01..11-07, earns a freeze
+    assert streaks.send_reminders(db, at(2026, 11, 8, 19, 30)) == 1  # reminded on NY 11-08
+    # 01:00 UTC on 11-09 is still 11-08 in NY; moving to UTC makes it 11-09 there.
+    user = set_timezone(client, db, jane, "UTC", utc(2026, 11, 9, 1), monkeypatch)
+
+    streak = view(db, user, utc(2026, 11, 9, 1))
+    assert (streak.current, streak.freezes_available, streak.active_today) == (7, 1, False)
+    # The open day they were reminded about is 11-09 in UTC: no second reminder for it.
+    assert streaks.send_reminders(db, utc(2026, 11, 9, 19, 30)) == 0
+    streaks.record_activity(db, user, utc(2026, 11, 9, 20))
+    assert streaks.send_reminders(db, utc(2026, 11, 10, 19, 30)) == 1

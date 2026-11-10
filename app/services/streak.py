@@ -116,6 +116,24 @@ def record_activity(db: Session, user: User, now: datetime | None = None) -> Non
         notifications.notify(db, user.id, "streak_milestone", entity_type="streak", data={"count": streak.current_count})
 
 
+def rebase_timezone(db: Session, user: User, old_timezone: str | None, now: datetime | None = None) -> None:
+    """Call when user.timezone has just changed from old_timezone, before committing. Stored streak dates
+    are local dates, so shift them by however many days "today" moved. This keeps every gap to today
+    exactly as it was: a day already counted stays counted (active_today stays true and a second activity
+    doesn't count again), and a streak that was alive stays alive. Does not commit."""
+    streak = repo.get(db, user.id)
+    if streak is None:
+        return
+    now = now or utcnow()
+    shift = local_now(now, user.timezone).date() - local_now(now, old_timezone).date()
+    if not shift:
+        return
+    for field in ("last_active_date", "frozen_date", "last_reminded_date"):
+        value = getattr(streak, field)
+        if value is not None:
+            setattr(streak, field, value + shift)
+
+
 def _hours_left(user: User, today: date, now: datetime) -> float:
     return round((next_midnight(today, user.timezone) - now).total_seconds() / 3600, 2)
 
