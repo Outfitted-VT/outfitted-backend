@@ -11,8 +11,12 @@ from app.models.follow import Follow
 from app.models.user import User
 from app.repositories import user as user_repository
 from app.schemas.image import ImageRead
-from app.schemas.user import UserCreate, UserPrivacySettingsUpdate, UserSearchResult, UserUpdate
+from app.schemas.user import UserCreate, UserPrivacySettingsUpdate, UserSearchResult, UserSuggestion, UserUpdate
+from app.services import streak as streak_service
 from app.services.image import get_owned_images
+
+
+STYLE_PROFILE_FIELDS = {"style_tags", "fit_preference", "top_size", "bottom_size", "feedback_tone"}
 
 
 class EmailAlreadyRegisteredError(Exception):
@@ -78,6 +82,12 @@ def update_profile(db: Session, user: User, changes: UserUpdate) -> User:
             user.avatar = None
         else:
             [user.avatar] = get_owned_images(db, user, [changes.avatar_image_id])
+    for field in STYLE_PROFILE_FIELDS & fields:
+        setattr(user, field, getattr(changes, field))
+    if "timezone" in fields and changes.timezone is not None and changes.timezone != user.timezone:
+        old_timezone, user.timezone = user.timezone, changes.timezone
+        # Streak dates are stored in the old timezone's calendar; move them to the new one.
+        streak_service.rebase_timezone(db, user, old_timezone)
 
     try:
         db.commit()
@@ -108,8 +118,15 @@ def search_users(
     query: str = "",
     *,
     limit: int = 20,
+    circle_only: bool = False,
 ) -> list[UserSearchResult]:
-    users = user_repository.search(db, query=query, exclude_user_id=viewer.id, limit=limit)
+    users = user_repository.search(
+        db,
+        query=query,
+        exclude_user_id=viewer.id,
+        limit=limit,
+        within_circle_of=viewer.id if circle_only else None,
+    )
     if not users:
         return []
 
@@ -132,6 +149,20 @@ def search_users(
             is_following=u.id in following_ids,
         )
         for u in users
+    ]
+
+
+def suggest_users(db: Session, viewer: User, *, limit: int = 6) -> list[UserSuggestion]:
+    """People the viewer doesn't follow yet, most mutual follows first."""
+    return [
+        UserSuggestion(
+            id=user.id,
+            username=user.username,
+            full_name=user.full_name,
+            avatar=ImageRead.model_validate(user.avatar) if user.avatar else None,
+            mutual_count=mutuals,
+        )
+        for user, mutuals in user_repository.suggestions(db, viewer.id, limit=limit)
     ]
 
 

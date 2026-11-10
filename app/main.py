@@ -1,4 +1,7 @@
+import logging
 import mimetypes
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -9,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.jobs import create_scheduler
 
 # Some OSes (e.g. Windows) don't map .webp, so /media would serve it as octet-stream.
 mimetypes.add_type("image/webp", ".webp")
@@ -34,12 +38,41 @@ TAGS_METADATA = [
     {"name": "users", "description": "Your account, public profiles, and follows."},
     {"name": "images", "description": "Upload images for fits and avatars."},
     {"name": "fits", "description": "Outfit posts, feeds, likes, and saves."},
+    {"name": "conversations", "description": "Direct chats and circles: messages, receipts, fit checks."},
+    {"name": "stories", "description": "24-hour Fit Stories, views, and replies."},
+    {"name": "notifications", "description": "In-app notifications and unread counts."},
+    {"name": "devices", "description": "Push notification tokens."},
     {"name": "health", "description": "Service and database status."},
 ]
 
 
+def configure_logging() -> None:
+    """Show the app's own INFO logs (logged pushes, job results) next to uvicorn's."""
+    logger = logging.getLogger("app")
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s - %(message)s"))
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    scheduler = create_scheduler() if settings.RUN_SCHEDULER else None
+    if scheduler is not None:
+        scheduler.start()
+        logging.getLogger("app.jobs").info("scheduler started: %s", [job.id for job in scheduler.get_jobs()])
+    try:
+        yield
+    finally:
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
+
+
 def create_app() -> FastAPI:
+    configure_logging()
     app = FastAPI(
+        lifespan=lifespan,
         title=settings.PROJECT_NAME,
         version=settings.VERSION,
         description=DESCRIPTION,

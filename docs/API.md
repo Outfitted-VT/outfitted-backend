@@ -386,11 +386,18 @@ Your own account, including private fields like `email`.
   "email": "jane.doe@example.com",
   "bio": "Thrift addict",
   "is_active": true,
-  "created_at": "2026-10-19T20:23:53.343519Z"
+  "created_at": "2026-10-19T20:23:53.343519Z",
+  "style_tags": ["minimal"],
+  "fit_preference": "relaxed",
+  "top_size": "S",
+  "bottom_size": "M",
+  "feedback_tone": "kind",
+  "timezone": "America/New_York",
+  "current_streak": 4
 }
 ```
 
-`avatar` is `null` until one is set.
+`avatar` is `null` until one is set. `current_streak` is your [streak](#streaks) right now (0 if it lapsed).
 
 ### Update your profile
 
@@ -404,6 +411,13 @@ Send **only the fields you want to change**. Omitted fields stay the same. Send 
 | `full_name` | Up to 100 characters. |
 | `bio` | Up to 160 characters. |
 | `avatar_image_id` | An image `id` from [Upload an image](#upload-an-image). |
+| `style_tags` | Up to 3 of `minimal`, `tailored`, `streetwear`, `y2k`, `romantic`, `sporty`. |
+| `fit_preference` | `fitted`, `true`, or `relaxed`. |
+| `top_size`, `bottom_size` | `XS`, `S`, `M`, `L`, or `XL` (US sizing). |
+| `feedback_tone` | How your circle should talk to you: `honest`, `kind`, or `hype`. |
+| `timezone` | IANA name from the device, e.g. `America/New_York` (default `UTC`). Streak days and quiet hours follow it. Send it on every app start: `Intl.DateTimeFormat().resolvedOptions().timeZone`. Unknown names are `422`. |
+
+The style profile fields come from the onboarding quiz and are returned by `GET /users/me`.
 
 ```json
 { "bio": "Thrift addict", "avatar_image_id": "517830fe-d102-41c1-84b5-f7036e814611" }
@@ -428,11 +442,13 @@ Someone's public profile with counts. Never includes their email. `{username}` i
   "follower_count": 1,
   "following_count": 0,
   "is_following": true,
-  "created_at": "2026-10-19T20:23:53.343519Z"
+  "created_at": "2026-10-19T20:23:53.343519Z",
+  "current_streak": 4
 }
 ```
 
 - `is_following` — whether **you** follow them (always `false` on your own profile).
+- `current_streak` — their [streak](#streaks) right now.
 - `404` `{"detail": "User not found"}`.
 
 For your own profile page, call this with your own username to get the counts.
@@ -821,11 +837,31 @@ Send any of `caption`, `items`, `occasion_tags`, `style_tags`. Omitted fields st
 
 ### Delete your fit
 
-`DELETE /fits/{fit_id}` 🔒 → `204`. Also deletes the fit's photos (unless one is your avatar). `403` if it's not yours, `404` if it doesn't exist.
+`DELETE /fits/{fit_id}` 🔒 → `204`. Also deletes the fit's photos (unless one is your avatar or in one of your stories). `403` if it's not yours, `404` if it doesn't exist.
 
 ### List a user's fits
 
 `GET /users/{username}/fits?limit=20&cursor=...` 🔒 → [page](#pagination) of fits, newest first.
+
+---
+
+## Privacy tiers
+
+Every fit has a `privacy_tier`, and every account has a default for new posts.
+
+| Tier | Explore feed | Following feed | Author's profile (others) | Author |
+|---|---|---|---|---|
+| `public` | yes | yes | yes | yes |
+| `close_friends` | no | yes | yes | yes |
+| `vault` (private drafts) | no | no | no | yes |
+
+- Set it when posting (`privacy_tier` on `POST /fits`, default `public`) or later with
+  `PATCH /fits/{id}/privacy` `{"privacy_tier": "close_friends", "allow_friend_try_on": false}` → the fit.
+- `allow_friend_try_on` (default `true`) controls whether others can [try this look](#try-this-look); vault fits never can.
+- `GET /users/me/privacy` → `{"default_closet_privacy": "public"}`; `PATCH /users/me/privacy` with the same shape changes it.
+- Vault fits don't count toward your [streak](#streaks).
+- [Stories](#stories) use `public` and `close_friends` too, but there "close friends" means **people you follow
+  who follow you back**, and close-friends stories are hidden from everyone else.
 
 ---
 
@@ -923,6 +959,392 @@ All 🔒. Users in follower/following lists have the compact shape:
 ```
 
 To show a Follow/Following button for someone, read `is_following` from [Get a profile](#get-a-profile).
+
+---
+
+## Messaging
+
+Direct chats and circles (group chats). Every endpoint is 🔒 and only works for members:
+anyone else gets `404 {"detail": "Conversation not found"}`.
+
+### Your circle
+
+People you follow or who follow you. Chats can only be started with them.
+
+- `GET /conversations/circle` → `[{ "user", "online", "last_seen_at", "has_live_fit_check", "has_active_story", "has_unseen_story" }]`
+  (`has_live_fit_check`: posted a fit in the last 24 hours; `has_active_story`: has a [story](#stories) you can see;
+  `has_unseen_story`: one of those you haven't viewed — draw the story ring).
+- `GET /users/search?q=&scope=circle` searches only your circle. Without `scope` it searches everyone.
+- `GET /users/suggestions?limit=6` → people you don't follow, most mutual follows first, each with `mutual_count`.
+
+### Conversations
+
+| Action | Request | Response |
+|---|---|---|
+| List | `GET /conversations` | `200` → conversations, most recent activity first |
+| Start | `POST /conversations` `{"type": "direct" \| "circle", "member_ids": [...], "title": null}` | `201` new, or `200` an existing direct chat |
+| Get one | `GET /conversations/{id}` | `200` |
+| Mute / rename | `PATCH /conversations/{id}` `{"muted": true}` or `{"title": "..."}` (circles only) | `200` |
+| Leave / hide | `DELETE /conversations/{id}` | `204`: leaves a circle; hides a direct chat until its next message |
+| Mark read | `POST /conversations/{id}/read` | `200` receipt |
+| Mark delivered | `POST /conversations/{id}/delivered` | `200` receipt |
+
+A conversation:
+
+```json
+{
+  "id": "...", "type": "circle", "title": "Gallery night", "created_at": "...",
+  "muted": false, "unread_count": 2, "last_activity_at": "...",
+  "members": [{ "user": { "id": "...", "username": "maya", "full_name": "Maya Chen", "avatar": null },
+                "role": "member", "online": true, "last_seen_at": "...",
+                "last_read_at": "...", "last_delivered_at": "..." }],
+  "last_message": { "...": "a message" }
+}
+```
+
+`member_ids` excludes you. A direct chat has exactly one; a circle up to 31. Members must be in
+your circle (`403` otherwise).
+
+### Messages
+
+`GET /conversations/{id}/messages?before=<next_cursor>&limit=30` → `{ "items", "next_cursor" }`, newest first.
+
+`POST /conversations/{id}/messages`:
+
+| `kind` | Fields |
+|---|---|
+| `text` | `body` (1-2000 characters) |
+| `image` | `image_id` from [Upload an image](#upload-an-image) (10 MB cap), optional `body` |
+| `fit_check` | `image_id`, `question` (up to 280), optional `context` ("Vernissage · 18°C") and `fit_id` |
+| `product` | `product: { name, color, price, url, image_id }`, optional `body` |
+
+A fifth kind, `story_reply`, only arrives from [Reply to a story](#reply-to-a-story); you can't send it here (`422`).
+Its `body` is the reply and `payload` is `{ "story_id", "caption", "image" }`. `image` becomes `null`
+about a week after the story expires: show "Story unavailable".
+Also send a `client_id` (any string up to 64 characters): retrying with the same one returns the
+stored message instead of sending twice. Text is trimmed and stripped of control and invisible
+characters. Sending more than 20 messages in 10 seconds returns `429`.
+
+**Errors:** `400 "Image not found"` (not your image) · `404 "Conversation not found"` (not a member) ·
+`409 "client_id was already used in another conversation"` · `422` validation (missing fields for the
+`kind`, body over 2000 characters) · `429 "You're sending messages too fast. Wait a moment."`
+
+A message:
+
+```json
+{
+  "id": "...", "conversation_id": "...", "sender": { "...": "user summary" },
+  "kind": "fit_check", "body": "Too dressed up?", "client_id": "c-123",
+  "payload": { "image": { "...": "image" }, "question": "Too dressed up?", "context": "Vernissage · 18°C", "fit_id": null },
+  "votes": { "wear": 2, "rethink": 1, "total": 3, "wear_pct": 67, "rethink_pct": 33, "my_vote": "wear" },
+  "created_at": "...", "edited_at": null, "deleted_at": null
+}
+```
+
+- `POST /messages/{id}/vote` `{"vote": "wear" | "rethink"}` → the new tally. One vote per member; voting again replaces it.
+- `DELETE /messages/{id}` → `204`. Sender only (`403` otherwise). The message stays with `deleted_at` set and `body`/`payload` cleared.
+
+**Delivery and read state** of your own messages: compare a message's `created_at` with the other
+members' `last_delivered_at` and `last_read_at`.
+
+### Realtime
+
+Open a WebSocket to `/api/v1/ws` and send `{"type": "auth", "token": "<access token>"}` first
+(within 10 seconds; a bad token closes with code `4401`). After `{"type": "ready"}` the server pushes:
+
+| Event | Fields |
+|---|---|
+| `message:new` | `message` |
+| `message:deleted` | `conversation_id`, `message_id` |
+| `vote:update` | `message_id`, `conversation_id`, tallies |
+| `receipt:update` | `conversation_id`, `user_id`, `last_read_at`, `last_delivered_at` |
+| `typing:start` / `typing:stop` | `conversation_id`, `user_id` |
+| `presence:update` | `user_id`, `online`, `last_seen_at` |
+| `conversation:update` | `conversation_id` (created, renamed, someone left): refetch it |
+| `story:new` | `story_id`, `user` — someone in your circle posted a story you can see: refetch the story feed |
+| `story:viewed` | `story_id`, `viewer`, `view_count` — to the owner, on someone's first view |
+| `notification:new` | `notification` ([the notification object](#notifications)) |
+| `notification:count` | `unread` — after any change to your unread notifications |
+
+Send `{"type": "typing:start" | "typing:stop", "conversation_id": "..."}` and `{"type": "ping"}`
+(answered with `pong`). Reconnect with a fresh token after it expires. Events go to sockets on the
+same server process, so run one worker (or add a shared broker) until that changes.
+
+**After reconnecting**, catch up with `GET /conversations` (unread counts and last messages) and
+`GET /conversations/{id}/messages` for the open chat: messages sent while you were away are
+not replayed over the socket.
+
+---
+
+## Stories
+
+Photos shared for 24 hours with your circle. Every endpoint is 🔒. Stories you aren't allowed to
+see, expired ones, and deleted ones all return `404 {"detail": "Story not found"}`.
+
+**Who sees a story:** `public` stories are shown to your circle in the feed and to anyone who opens
+your profile; `close_friends` stories only to people you follow who follow you back.
+
+### The story object
+
+```json
+{
+  "id": "6f1c...", "user_id": "3a2f...",
+  "image": { "id": "...", "width": 1080, "height": 1920, "generated": false, "url": "http://localhost:8000/media/images/....webp" },
+  "caption": "Gallery night", "fit_id": null, "visibility": "public",
+  "created_at": "2026-11-09T20:00:00Z", "expires_at": "2026-11-10T20:00:00Z",
+  "seen": false, "view_count": null
+}
+```
+
+`seen` is whether you viewed it (always `true` for your own). `view_count` is only set on your own stories.
+
+### Post a story
+
+`POST /stories` 🔒
+
+| Field | Required | Rules |
+|---|---|---|
+| `image_id` | yes | From [Upload an image](#upload-an-image). To hide faces, [blur them](#blur-the-faces-in-an-image) first and send the blurred copy's id. |
+| `caption` | no | Up to 200 characters. |
+| `fit_id` | no | One of your fits, not in your vault. |
+| `visibility` | no | `public` (default) or `close_friends`. |
+
+```json
+{ "image_id": "16cc86b0-3f41-48af-b5b2-1ba3a3e36c26", "caption": "Gallery night", "visibility": "close_friends" }
+```
+
+**Responses:** `201` story · `400 "Image not found"` · `400 "Fit not found"` · `409 "You can have at most 20 active stories"` · `422` validation.
+Posting a story counts toward your [streak](#streaks) and sends `story:new` to your audience.
+
+### Story feed
+
+`GET /stories/feed` 🔒 → groups, one per person in your circle with active stories you can see:
+
+```json
+[
+  {
+    "user": { "id": "...", "username": "jane", "full_name": "Jane", "avatar": null },
+    "stories": [ { "...": "story, oldest first" } ],
+    "has_unseen": false,
+    "latest_at": "2026-11-09T20:00:00Z"
+  }
+]
+```
+
+Order: **your own group first** (if you have stories), then people with unseen stories, then everyone
+else; within each, most recent first.
+
+### A user's stories
+
+`GET /users/{user_id}/stories` 🔒 → one group (as above) with the stories you can see, `stories: []` when there are none. `404 "User not found"`.
+
+### View, viewers, delete
+
+| Action | Request | Response |
+|---|---|---|
+| Mark seen | `POST /stories/{id}/view` | `204`. Idempotent; your own views aren't counted. The owner gets `story:viewed`. |
+| Viewers | `GET /stories/{id}/viewers?limit=20&cursor=` | `200` `{ "items": [{ "user", "viewed_at" }], "next_cursor" }`, newest first. Owner only: `403 "Only the story's owner can do that"`. |
+| Delete | `DELETE /stories/{id}` | `204`. Owner only (`403`). |
+
+### Reply to a story
+
+`POST /stories/{id}/reply` 🔒 `{"body": "Obsessed with this", "client_id": "optional"}`
+
+Sends a `story_reply` message into your direct chat with the owner, creating the chat if needed, and
+returns the [message](#messages) (`201`). The owner gets a `story_reply` notification.
+
+**Errors:** `400 "You can't reply to your own story"` · `403 "You can only chat with people in your circle"` · `404` · `409` (client_id reused elsewhere) · `422` (empty body) · `429`.
+
+---
+
+## Streaks
+
+A day counts when you **post a fit** (not vault), **post a story**, or **send a fit check**, using your
+local calendar day (`timezone` on [your account](#update-your-profile)).
+
+- Each 7 days in a row earns a **freeze** (max 2). Missing one day uses a freeze automatically and keeps the streak.
+- Missing two days in a row, or one day with no freeze, ends it; your next activity starts again at 1.
+- Milestones: 3, 7, 14, 30, 50, 100, 365.
+
+`GET /users/me/streak` 🔒
+
+```json
+{ "current": 8, "longest": 21, "active_today": false, "freezes_available": 1, "hours_left_today": 5.25, "next_milestone": 14 }
+```
+
+`hours_left_today` counts down to your local midnight (23 or 25 hours on daylight-saving change days).
+Your current streak is also on `GET /users/me` and everyone's profile as `current_streak`.
+
+Notifications: `streak_milestone`, `streak_reminder` (between 19:00 and 20:00 your time when you have a 2+ day
+streak and haven't counted today, once a day), `streak_saved` (a freeze was used), `streak_lost`.
+
+---
+
+## Notifications
+
+Every endpoint is 🔒.
+
+### The notification object
+
+```json
+{
+  "id": "9b0e...",
+  "type": "fit_vote",
+  "actor": { "id": "...", "username": "maya", "full_name": "Maya", "avatar": null },
+  "actors": [ { "...": "Maya" }, { "...": "Leo" } ],
+  "actor_count": 4,
+  "entity_type": "fit",
+  "entity_id": "44bf...",
+  "title": "New votes",
+  "body": "Maya and 3 others voted on your fit",
+  "link": "/fits/44bf...",
+  "data": {},
+  "read": false,
+  "created_at": "2026-11-09T20:00:00Z"
+}
+```
+
+Show `title`/`body` as they are and navigate to `link` on tap. Likes, fit votes, fit-check votes and story
+view milestones on the same item within 24 hours **merge into one row**: it moves back to the top and
+becomes unread when someone new joins it.
+
+| `type` | When | `link` |
+|---|---|---|
+| `follow` | Someone followed you | `/users/{username}` |
+| `like` | Liked your fit (grouped) | `/fits/{id}` |
+| `comment` | Commented on your fit (`data.preview`) | `/fits/{id}` |
+| `fit_vote` | Voted on your fit (grouped) | `/fits/{id}` |
+| `fit_check_vote` | Voted on your fit check (grouped) | `/conversations/{id}?message={message_id}` |
+| `story_reply` | Replied to your story | `/conversations/{id}` |
+| `story_view_milestone` | Your story reached 10, 50, or 100 viewers (`data.viewers`) | `/stories/{id}/viewers` |
+| `circle_added` | Added you to a circle | `/conversations/{id}` |
+| `message` | A message while you had no open socket | `/conversations/{id}` |
+| `streak_reminder`, `streak_milestone`, `streak_saved`, `streak_lost` | See [Streaks](#streaks) (`data.count`) | `/streak` |
+
+You're never notified about your own actions, or about muted conversations.
+
+### Endpoints
+
+| Action | Request | Response |
+|---|---|---|
+| List | `GET /notifications?limit=20&cursor=` | `200` page, newest first. `400 "Invalid cursor"` |
+| Unread count | `GET /notifications/unread-count` | `200` `{"unread": 3}` |
+| Mark read | `POST /notifications/read` `{"ids": ["..."]}` or `{"all": true}` | `200` `{"unread": 0}`. Sending neither or both is `422`. |
+| Settings | `GET /users/me/notification-settings` | `200` (below) |
+| Change settings | `PATCH /users/me/notification-settings` | `200`. Send only what changes. |
+
+```json
+{ "social": true, "messages": true, "stories": true, "streaks": true,
+  "quiet_hours_start": "22:00:00", "quiet_hours_end": "07:30:00", "timezone": "America/New_York" }
+```
+
+Settings control **push**; everything still appears in the in-app list. Groups: `social` (follow, like,
+comment, fit_vote, fit_check_vote, circle_added), `messages` (message), `stories` (story_reply,
+story_view_milestone), `streaks` (the four streak types). Quiet hours are local times and can wrap midnight;
+send both, or both `null` to turn them off (`422` if only one is sent).
+
+---
+
+## Devices and push
+
+| Action | Request | Response |
+|---|---|---|
+| Register / refresh | `POST /devices` `{"platform": "ios" \| "android", "token": "...", "app_version": "1.4.0"}` | `200` `{ "platform", "token", "app_version", "created_at", "last_seen_at" }` |
+| Remove (logout) | `DELETE /devices/{token}` | `204`. Idempotent; only removes your own token. |
+
+Register after login and on every app start (it's an upsert by `token`; a token registered by another
+account moves to you). iOS sends the APNs device token as hex; Android sends the FCM registration token.
+
+Every notification is also pushed to your devices unless its group is off or it's quiet hours. Pushes
+for the same item replace each other (APNs `apns-collapse-id`, FCM `collapse_key`). The iOS badge is
+unread notifications plus unread messages. Each push carries `data`: `{ "notification_id", "type", "link" }`.
+
+---
+
+## Wardrobe
+
+Your digital closet with cost-per-wear. Every endpoint is 🔒 and only sees your own items;
+others' or missing ids are `404 {"detail": "Wardrobe item not found"}`.
+
+| Action | Request | Response |
+|---|---|---|
+| List | `GET /wardrobe?category=shoes` (`shoes`, `clothing`, `accessories`; optional) | `200` items, newest first |
+| Summary | `GET /wardrobe/summary` | `200` `{ "total_pieces", "total_valuation", "average_cost_per_wear", "shoes_count", "clothing_count", "accessories_count" }` |
+| Add | `POST /wardrobe` | `201` item |
+| Get | `GET /wardrobe/{id}` | `200` item |
+| Edit | `PATCH /wardrobe/{id}` (only fields sent) | `200` item |
+| Log a wear | `POST /wardrobe/{id}/wear` | `200` item with `times_worn + 1` and `last_worn_at` now |
+| Delete | `DELETE /wardrobe/{id}` | `204` |
+
+```json
+{ "primary_category": "shoes", "name": "Retro Metallic Silver Runners", "brand": "Onitsuka", "sub_category": "sneakers",
+  "color": "silver", "price": 140, "times_worn": 3, "tag": "daily", "image_url": "https://...", "notes": null }
+```
+
+An item adds `id`, `user_id`, `cost_per_wear` (price / wears), `last_worn_at`, `created_at`, `updated_at`.
+`name` is 1-120 characters; `price` and `times_worn` can't be negative.
+
+---
+
+## Memories
+
+A daily outfit log for the calendar. Every endpoint is 🔒; other people's ids are `404 {"detail": "Outfit memory not found"}`.
+
+| Action | Request | Response |
+|---|---|---|
+| List | `GET /memories?year=2026&month=11` (both optional) | `200` memories, newest date first |
+| Log | `POST /memories` | `201` memory |
+| Get | `GET /memories/{id}` | `200` |
+| Delete | `DELETE /memories/{id}` | `204` |
+
+```json
+{ "date": "2026-11-02", "title": "Monday Studio Critique", "photo_url": null, "notes": "Felt sharp",
+  "weather": "12°C, cloudy", "rating": 4, "tagged_pieces": ["Silver Runners"], "auto_log_wear": true }
+```
+
+`date` is `YYYY-MM-DD`; `rating` 1-5 (default 5). With `auto_log_wear` (default `true`), each tagged piece
+that matches one of your wardrobe item names logs a wear on that item.
+
+---
+
+## Sizing (TrueSize Passport)
+
+Benchmark garments that fit you, used to recommend sizes at other brands. Every endpoint is 🔒.
+
+| Action | Request | Response |
+|---|---|---|
+| Your passport | `GET /sizing/passport` | `200` `{ "user_id", "benchmarks_count", "top_brands", "items", "calibrated_baseline" }` |
+| Add a benchmark | `POST /sizing/passport` | `201` garment |
+| Remove one | `DELETE /sizing/passport/{id}` | `204` · `404 "Reference garment not found"` |
+| Recommend a size | `POST /sizing/translate` | `200` recommendation |
+
+```json
+{ "brand": "Levi's", "category": "bottoms", "item_name": "501 Original Fit", "size": "30W 32L", "fit_feeling": "perfect", "is_favorite": true }
+```
+
+`category`: `tops`, `bottoms`, `dresses`, `outerwear`, `shoes`, `other`. `fit_feeling`: `perfect`, `snug`, `oversized`.
+
+Translate request `{ "target_brand": "Zara", "category": "tops", "target_item_fit_pref": "standard", "target_item_name": null, "product_url": null }`
+(`target_item_fit_pref`: `standard`, `relaxed`, `snug`) returns `{ "target_brand", "category", "recommended_size",
+"confidence_score" (50-99), "alternative_size", "brand_calibration_note", "fabric_stretch_advice",
+"matched_reference_pieces", "avoided_return_risk" }`.
+
+---
+
+## Impact
+
+Returns you avoided, in dollars and CO₂. Every endpoint is 🔒.
+
+- `GET /impact` → `{ "user_id", "total_dollars_saved", "returns_prevented_count", "post_office_trips_avoided", "co2_kg_saved", "milestone_badge", "milestone_progress_pct", "recent_saves" }`
+- `POST /impact/record` → `201` record (`id`, the fields below, `dollars_saved`, `co2_saved_kg`, `created_at`):
+
+```json
+{ "item_name": "Oversized Wool Trench", "brand": "Aritzia", "category": "outerwear", "estimated_price": 148,
+  "action_type": "size_corrected", "fit_id": null, "notes": null }
+```
+
+`action_type`: `size_corrected`, `avoided_bad_cut`, `fit_check_voted_rethink`, `confirmed_first_try`,
+`stolen_from_friend`. `estimated_price` is 1-5000 (default 75).
 
 ---
 

@@ -10,6 +10,7 @@ from app.schemas.error import ErrorResponse
 from app.schemas.fit import FitCreate, FitPrivacyUpdate, FitRead, FitUpdate
 from app.schemas.pagination import Page
 from app.schemas.vote import FitVoteIn
+from app.services import comment as comment_service
 from app.services import engagement as engagement_service
 from app.services import follow as follow_service
 from app.services import vote as vote_service
@@ -286,11 +287,9 @@ def add_comment(
     db: SessionDep,
 ) -> FitCommentRead:
     try:
-        get_fit(db, fit_id)
+        comment = comment_service.add_comment(db, current_user, fit_id, data.content)
     except FitNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fit not found") from None
-    comment = comment_repository.add_comment(db, fit_id, current_user.id, data.content)
-    db.commit()
     return FitCommentRead.from_model(comment)
 
 

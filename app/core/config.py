@@ -11,13 +11,25 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     ENVIRONMENT: str = "development"
     API_V1_PREFIX: str = "/api/v1"
-    CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "capacitor://localhost",
+        "ionic://localhost",
+        "https://localhost",
+        "http://localhost",
+    ]
     DATABASE_URL: str = "sqlite:///./outfitted.db"
 
     # Uploaded files. MEDIA_BASE_URL is where clients load them from (a CDN/bucket URL later).
     MEDIA_ROOT: str = "media"
     MEDIA_BASE_URL: str = "http://localhost:8000/media"
     MAX_UPLOAD_BYTES: int = 10 * 1024 * 1024
+
+    MESSAGE_MAX_LENGTH: int = 2000
+    MESSAGE_SEND_LIMIT: int = 20
+    MESSAGE_SEND_WINDOW_SECONDS: int = 10
+    CIRCLE_MAX_MEMBERS: int = 32
 
     SECRET_KEY: str = INSECURE_DEV_SECRET_KEY
     JWT_ALGORITHM: str = "HS256"
@@ -51,6 +63,16 @@ class Settings(BaseSettings):
     # Detections are cheap but still paid; repeat requests for the same image are cached.
     DETECTION_DAILY_LIMIT: int = 200
     DETECTION_TIMEOUT_SECONDS: int = 60
+
+    RUN_SCHEDULER: bool = False
+
+    APNS_KEY_ID: str | None = None
+    APNS_TEAM_ID: str | None = None
+    APNS_BUNDLE_ID: str | None = None
+    APNS_KEY_PATH: str | None = None
+    APNS_USE_SANDBOX: bool = True
+    FCM_PROJECT_ID: str | None = None
+    FCM_CREDENTIALS_PATH: str | None = None
 
     # Ignore settings we no longer use (e.g. SERPAPI_API_KEY from the removed shop search), so an
     # older .env still starts the server.
@@ -87,6 +109,14 @@ class Settings(BaseSettings):
         if self.TRYON_LOCATION:
             return self.TRYON_LOCATION
         return "us-central1" if self.TRYON_MODEL.startswith("virtual-try-on") else "global"
+
+    @property
+    def apns_configured(self) -> bool:
+        return all((self.APNS_KEY_ID, self.APNS_TEAM_ID, self.APNS_BUNDLE_ID, self.APNS_KEY_PATH))
+
+    @property
+    def fcm_configured(self) -> bool:
+        return bool(self.FCM_PROJECT_ID and self.FCM_CREDENTIALS_PATH)
 
     @property
     def refresh_cookie_path(self) -> str:

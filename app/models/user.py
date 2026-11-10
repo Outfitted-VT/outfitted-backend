@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, String, Uuid
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -25,5 +26,14 @@ class User(TimestampMixin, Base):
 
     # Closet privacy settings
     default_closet_privacy: Mapped[str] = mapped_column(String(20), default="public", server_default="public")
+
+    style_tags: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+    fit_preference: Mapped[str | None] = mapped_column(String(10))
+    top_size: Mapped[str | None] = mapped_column(String(4))
+    bottom_size: Mapped[str | None] = mapped_column(String(4))
+    feedback_tone: Mapped[str | None] = mapped_column(String(10))
+
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC", server_default="UTC")
 
     avatar: Mapped[Image | None] = relationship(foreign_keys=[avatar_image_id], lazy="joined")

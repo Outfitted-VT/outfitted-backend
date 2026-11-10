@@ -1,3 +1,6 @@
+import uuid
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import CurrentUser, PageCursor, PageLimit, SessionDep
@@ -5,12 +8,18 @@ from app.core.pagination import InvalidCursorError
 from app.schemas.error import ErrorResponse
 from app.schemas.fit import FitRead
 from app.schemas.pagination import Page
-from app.schemas.user import ProfileRead, UserPrivacySettingsRead, UserPrivacySettingsUpdate, UserRead, UserSearchResult, UserSummary, UserUpdate
+from app.schemas.notification import NotificationSettingsRead, NotificationSettingsUpdate
+from app.schemas.story import StoryGroup
+from app.schemas.streak import StreakRead
+from app.schemas.user import ProfileRead, UserPrivacySettingsRead, UserPrivacySettingsUpdate, UserRead, UserSearchResult, UserSuggestion, UserSummary, UserUpdate
 from app.services.engagement import list_saved_fits
 from app.services import follow as follow_service
+from app.services import notification as notification_service
+from app.services import story as story_service
+from app.services import streak as streak_service
 from app.services.fit import list_fits
 from app.services.image import ImageNotFoundError
-from app.services.user import UsernameTakenError, get_user_by_username, search_users as search_users_service, update_privacy_settings, update_profile
+from app.services.user import UsernameTakenError, get_user_by_username, search_users as search_users_service, suggest_users, update_privacy_settings, update_profile
 
 router = APIRouter()
 
@@ -33,9 +42,44 @@ USER_NOT_FOUND_RESPONSE = {
 @router.get(
     "/me", response_model=UserRead, summary="Get your account", responses=UNAUTHORIZED_RESPONSE
 )
-def read_current_user(current_user: CurrentUser) -> UserRead:
-    """Return the logged-in user, including private fields like email."""
-    return UserRead.model_validate(current_user)
+def read_current_user(current_user: CurrentUser, db: SessionDep) -> UserRead:
+    """Return the logged-in user, including private fields like email, and their current streak."""
+    return _me(db, current_user)
+
+
+def _me(db, user) -> UserRead:
+    return UserRead.model_validate(user).model_copy(
+        update={"current_streak": streak_service.current_streak(db, user)}
+    )
+
+
+@router.get("/me/streak", response_model=StreakRead, summary="Your streak", responses=UNAUTHORIZED_RESPONSE)
+def read_streak(current_user: CurrentUser, db: SessionDep) -> StreakRead:
+    """Days count in your timezone (`PATCH /users/me` with `timezone`)."""
+    return streak_service.get_streak(db, current_user)
+
+
+@router.get(
+    "/me/notification-settings",
+    response_model=NotificationSettingsRead,
+    summary="Your push notification settings",
+    responses=UNAUTHORIZED_RESPONSE,
+)
+def read_notification_settings(current_user: CurrentUser, db: SessionDep) -> NotificationSettingsRead:
+    return notification_service.get_settings(db, current_user)
+
+
+@router.patch(
+    "/me/notification-settings",
+    response_model=NotificationSettingsRead,
+    summary="Change your push notification settings",
+    responses=UNAUTHORIZED_RESPONSE,
+)
+def update_notification_settings(
+    changes: NotificationSettingsUpdate, current_user: CurrentUser, db: SessionDep
+) -> NotificationSettingsRead:
+    """Send only what changes. Quiet hours are local times in your timezone; send both, or both null to clear."""
+    return notification_service.update_settings(db, current_user, changes)
 
 
 @router.get(
@@ -98,7 +142,7 @@ def update_current_user(
         ) from None
     except ImageNotFoundError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image not found") from None
-    return UserRead.model_validate(user)
+    return _me(db, user)
 
 
 INVALID_CURSOR_RESPONSE = {
@@ -137,9 +181,24 @@ def search_users(
     db: SessionDep,
     q: str = "",
     limit: PageLimit = 20,
+    scope: Literal["all", "circle"] = "all",
 ) -> list[UserSearchResult]:
-    """Search users by username or full name."""
-    return search_users_service(db, current_user, query=q, limit=limit)
+    """
+    Search users by username or full name. `scope=circle` limits results to people you follow
+    or who follow you, for starting a chat.
+    """
+    return search_users_service(db, current_user, query=q, limit=limit, circle_only=scope == "circle")
+
+
+@router.get(
+    "/suggestions",
+    response_model=list[UserSuggestion],
+    summary="Suggested people to add to your circle",
+    responses=UNAUTHORIZED_RESPONSE,
+)
+def read_suggestions(current_user: CurrentUser, db: SessionDep, limit: PageLimit = 6) -> list[UserSuggestion]:
+    """People you don't follow yet, most mutual follows first."""
+    return suggest_users(db, current_user, limit=limit)
 
 
 @router.get(
@@ -178,6 +237,20 @@ def read_user_fits(
     except InvalidCursorError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from None
     return Page(items=[FitRead.from_view(view) for view in page.views], next_cursor=page.next_cursor)
+
+
+@router.get(
+    "/{user_id}/stories",
+    response_model=StoryGroup,
+    summary="A user's active stories",
+    responses={**UNAUTHORIZED_RESPONSE, **USER_NOT_FOUND_RESPONSE},
+)
+def read_user_stories(user_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> StoryGroup:
+    """The stories you're allowed to see, oldest first. `stories` is empty when there are none."""
+    try:
+        return story_service.user_stories(db, current_user, user_id)
+    except story_service.UserNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from None
 
 
 def _user_not_found() -> HTTPException:
