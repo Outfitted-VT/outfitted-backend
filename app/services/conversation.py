@@ -15,6 +15,7 @@ from app.models.user import User
 from app.realtime import hub
 from app.repositories import conversation as repo
 from app.repositories import image as image_repository
+from app.repositories import story as story_repository
 from app.schemas.conversation import (
     CirclePerson,
     ConversationCreate,
@@ -29,6 +30,8 @@ from app.schemas.conversation import (
 from app.schemas.image import ImageRead
 from app.schemas.pagination import Page
 from app.schemas.user import UserSummary
+from app.services import notification as notifications
+from app.services import streak as streaks
 from app.services.image import get_owned_images
 
 LIVE_FIT_WINDOW = timedelta(hours=24)
@@ -62,6 +65,10 @@ class CannotRenameDirectError(Exception):
 
 class RateLimitedError(Exception):
     pass
+
+
+class ClientIdConflictError(Exception):
+    """The client_id was already used for a message in another conversation."""
 
 
 def _membership(db: Session, conversation_id: uuid.UUID, user: User) -> ConversationMember:
@@ -225,6 +232,12 @@ def create_conversation(db: Session, user: User, data: ConversationCreate) -> tu
         raise
     db.refresh(conversation)
     hub.publish(others, {"type": "conversation:update", "conversation_id": conversation.id})
+    if conversation.type == "circle":
+        for member_id in others:
+            notifications.notify(
+                db, member_id, "circle_added", actor=user, entity_type="conversation", entity_id=conversation.id,
+                data={"title": conversation.title},
+            )
     return get_conversation(db, user, conversation.id), True
 
 
@@ -258,15 +271,79 @@ def _payload(db: Session, user: User, data: MessageCreate) -> dict | None:
     return None
 
 
-def send_message(db: Session, user: User, conversation_id: uuid.UUID, data: MessageCreate) -> MessageRead:
-    """Raises ConversationNotFoundError, RateLimitedError, and ImageNotFoundError (app.services.image)."""
-    member = _membership(db, conversation_id, user)
-    if data.client_id and (existing := repo.get_by_client_id(db, user.id, data.client_id)):
-        if existing.conversation_id == conversation_id:
-            return message_views(db, user.id, [existing])[0]
+def _already_sent(db: Session, user: User, conversation_id: uuid.UUID, client_id: str | None) -> MessageRead | None:
+    """The stored message for a retried send. Raises ClientIdConflictError if the id was used elsewhere."""
+    existing = repo.get_by_client_id(db, user.id, client_id) if client_id else None
+    if existing is None:
+        return None
+    if existing.conversation_id != conversation_id:
+        raise ClientIdConflictError
+    return message_views(db, user.id, [existing])[0]
+
+
+def _post(db: Session, user: User, member: ConversationMember, message: Message) -> tuple[MessageRead, bool]:
+    """Store and broadcast a message, or return the stored one when its client_id was already sent.
+    The flag is True when this call stored it."""
+    conversation_id = member.conversation_id
+    if existing := _already_sent(db, user, conversation_id, message.client_id):
+        return existing, False
     if not send_limiter.allow(user.id):
         raise RateLimitedError
+    try:
+        repo.add(db, message)
+        repo.unhide_all(db, conversation_id)
+        member.last_read_at = member.last_delivered_at = message.created_at
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if existing := _already_sent(db, user, conversation_id, message.client_id):
+            return existing, False
+        raise
+    db.refresh(message)
 
+    view = message_views(db, None, [message])[0]
+    members = repo.member_ids(db, conversation_id)
+    hub.publish(members, {"type": "message:new", "message": view})
+    if message.kind == "fit_check":
+        streaks.record_activity(db, user)
+    if message.kind != "story_reply":
+        _notify_offline(db, user, member.conversation, message, members)
+    return view, True
+
+
+def _preview(message: Message) -> str:
+    payload = message.payload or {}
+    if message.kind == "image":
+        return "Sent a photo"
+    if message.kind == "fit_check":
+        return f"Fit check: {message.body}"
+    if message.kind == "product":
+        return f"Shared {payload.get('product', {}).get('name', 'a product')}"
+    return message.body or ""
+
+
+def _notify_offline(
+    db: Session, sender: User, conversation: Conversation, message: Message, members: list[uuid.UUID]
+) -> None:
+    """A message notification for each member with no open socket. Muted members are skipped by notify."""
+    data = {
+        "message_id": str(message.id),
+        "kind": message.kind,
+        "preview": _preview(message),
+        "conversation_title": conversation.title if conversation.type == "circle" else None,
+    }
+    for member_id in members:
+        if member_id != sender.id and not hub.is_online(member_id):
+            notifications.notify(
+                db, member_id, "message", actor=sender, entity_type="conversation", entity_id=conversation.id,
+                data=data, conversation_id=conversation.id,
+            )
+
+
+def send_message(db: Session, user: User, conversation_id: uuid.UUID, data: MessageCreate) -> MessageRead:
+    """Raises ConversationNotFoundError, RateLimitedError, ClientIdConflictError, and ImageNotFoundError
+    (app.services.image)."""
+    member = _membership(db, conversation_id, user)
     message = Message(
         conversation_id=conversation_id,
         sender_id=user.id,
@@ -275,15 +352,26 @@ def send_message(db: Session, user: User, conversation_id: uuid.UUID, data: Mess
         payload=_payload(db, user, data),
         client_id=data.client_id,
     )
-    repo.add(db, message)
-    repo.unhide_all(db, conversation_id)
-    member.last_read_at = member.last_delivered_at = message.created_at
-    db.commit()
-    db.refresh(message)
+    return _post(db, user, member, message)[0]
 
-    view = message_views(db, None, [message])[0]
-    hub.publish(repo.member_ids(db, conversation_id), {"type": "message:new", "message": view})
-    return view
+
+def send_story_reply(
+    db: Session, user: User, owner_id: uuid.UUID, payload: dict, body: str, client_id: str | None
+) -> tuple[MessageRead, bool]:
+    """Reply in the direct chat with the story's owner, starting it if needed. The flag is False when a
+    retried client_id returned the stored reply. Raises NotInCircleError, RateLimitedError, and
+    ClientIdConflictError."""
+    conversation, _ = create_conversation(db, user, ConversationCreate(type="direct", member_ids=[owner_id]))
+    member = _membership(db, conversation.id, user)
+    message = Message(
+        conversation_id=conversation.id,
+        sender_id=user.id,
+        kind="story_reply",
+        body=body,
+        payload=payload,
+        client_id=client_id,
+    )
+    return _post(db, user, member, message)
 
 
 def _receipt(member: ConversationMember) -> dict:
@@ -365,16 +453,22 @@ def vote(db: Session, user: User, message_id: uuid.UUID, choice: str) -> VoteRes
     if message.kind != "fit_check" or message.deleted_at is not None:
         raise NotAFitCheckError
     try:
-        repo.set_vote(db, message.id, user.id, choice)
+        first = repo.set_vote(db, message.id, user.id, choice)
         db.commit()
     except IntegrityError:
         db.rollback()
+        first = False
         repo.set_vote(db, message.id, user.id, choice)
         db.commit()
     tally = _tally(repo.vote_counts(db, [message.id]).get(message.id, {}), choice)
     result = VoteResult(message_id=message.id, conversation_id=message.conversation_id, **tally.model_dump())
     event = {"type": "vote:update", **result.model_dump(exclude={"my_vote"})}
     hub.publish(repo.member_ids(db, message.conversation_id), event)
+    if first and message.sender_id is not None:
+        notifications.notify(
+            db, message.sender_id, "fit_check_vote", actor=user, entity_type="message", entity_id=message.id,
+            data={"conversation_id": str(message.conversation_id)}, conversation_id=message.conversation_id,
+        )
     return result
 
 
@@ -396,13 +490,18 @@ def delete_message(db: Session, user: User, message_id: uuid.UUID) -> None:
 
 def circle(db: Session, user: User, *, limit: int = 30) -> list[CirclePerson]:
     people = repo.circle_users(db, user.id, limit=limit)
-    live = repo.users_with_fits_since(db, [p.id for p in people], utcnow() - LIVE_FIT_WINDOW)
+    ids = [p.id for p in people]
+    now = utcnow()
+    live = repo.users_with_fits_since(db, ids, now - LIVE_FIT_WINDOW)
+    stories = story_repository.users_with_stories(db, user.id, ids, now)
     return [
         CirclePerson(
             user=UserSummary.model_validate(p),
             online=hub.is_online(p.id),
             last_seen_at=p.last_seen_at,
             has_live_fit_check=p.id in live,
+            has_active_story=p.id in stories,
+            has_unseen_story=stories.get(p.id, False),
         )
         for p in people
     ]
@@ -423,6 +522,9 @@ def touch_presence(db: Session, user: User, online: bool) -> None:
 
 
 def publish_typing(db: Session, user: User, conversation_id: uuid.UUID, kind: str) -> None:
-    others = [i for i in repo.member_ids(db, conversation_id) if i != user.id]
+    members = repo.member_ids(db, conversation_id)
+    if user.id not in members:
+        return
+    others = [i for i in members if i != user.id]
     hub.publish(others, {"type": kind, "conversation_id": conversation_id, "user_id": user.id})
 

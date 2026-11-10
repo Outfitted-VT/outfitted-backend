@@ -408,3 +408,46 @@ def test_typing_is_ignored_for_non_members(client: TestClient, direct: str, jane
             assert outsider.receive_json() == {"type": "pong"}
         text(client, jane, direct, "after")
         assert socket.receive_json()["type"] == "message:new"
+
+
+def test_client_id_reused_in_another_conversation_conflicts(client: TestClient, direct: str, circle, jane, bob, carol) -> None:
+    other = start(client, jane, [carol]).json()["id"]
+    assert send(client, jane, direct, body="first", client_id="c-1").status_code == 201
+
+    response = send(client, jane, other, body="second", client_id="c-1")
+
+    assert response.status_code == 409
+
+
+def test_socket_releases_its_transaction(client: TestClient, direct: str, jane, db) -> None:
+    with client.websocket_connect("/api/v1/ws") as socket:
+        connect(socket, jane)
+        socket.send_json({"type": "typing:start", "conversation_id": direct})
+        socket.send_json({"type": "ping"})
+        assert socket.receive_json() == {"type": "pong"}
+        assert not db.in_transaction()
+
+
+def next_event(socket, kind: str) -> dict:
+    while (event := socket.receive_json())["type"] != kind:
+        pass
+    return event
+
+
+def test_typing_stops_after_leaving_a_circle(client: TestClient, circle, jane, bob, carol) -> None:
+    conversation_id = start(client, jane, [bob, carol], kind="circle", title="Trip").json()["id"]
+    with client.websocket_connect("/api/v1/ws") as socket:
+        connect(socket, jane)
+        with client.websocket_connect("/api/v1/ws") as leaver:
+            connect(leaver, bob)
+            leaver.send_json({"type": "typing:start", "conversation_id": conversation_id})
+            assert next_event(socket, "typing:start")["user_id"] == str(bob.id)
+            client.delete(f"{CONVERSATIONS_URL}/{conversation_id}", headers=bob.headers)
+            leaver.send_json({"type": "typing:stop", "conversation_id": conversation_id})
+            leaver.send_json({"type": "ping"})
+            next_event(leaver, "pong")
+        text(client, jane, conversation_id, "after")
+        seen = []
+        while (event := socket.receive_json())["type"] != "message:new":
+            seen.append(event["type"])
+        assert "typing:stop" not in seen

@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.session import get_db
 from app.main import app
 from app.models import Base
+from app.services import notification as notification_service
 from app.storage import LocalStorage, get_storage
 
 # In-memory SQLite shared across connections, so tests never touch the real database.
@@ -34,6 +35,23 @@ def db() -> Generator[Session, None, None]:
     finally:
         session.close()
         Base.metadata.drop_all(bind=engine)
+
+
+class RecordingPushQueue:
+    """Stands in for the background push queue: records deliveries instead of running them."""
+
+    def __init__(self) -> None:
+        self.submitted: list[tuple] = []
+
+    def submit(self, fn, *args) -> None:
+        self.submitted.append((fn, *args))
+
+
+@pytest.fixture(autouse=True)
+def push_queue(monkeypatch) -> RecordingPushQueue:
+    queue = RecordingPushQueue()
+    monkeypatch.setattr(notification_service, "push_queue", queue)
+    return queue
 
 
 @pytest.fixture

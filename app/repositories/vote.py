@@ -8,15 +8,17 @@ from sqlalchemy.orm import Session
 from app.models.vote import FitVote
 
 
-def set_vote(db: Session, user_id: uuid.UUID, fit_id: uuid.UUID, choice: str) -> None:
-    """Record the vote, replacing the user's previous one on this fit.
+def set_vote(db: Session, user_id: uuid.UUID, fit_id: uuid.UUID, choice: str) -> bool:
+    """Record the vote, replacing the user's previous one on this fit. True for a first vote.
 
     Raises IntegrityError if another request inserted this user's first vote
     between the UPDATE and the INSERT; the caller recovers with update_choice.
     """
-    if not update_choice(db, user_id, fit_id, choice):
+    first = not update_choice(db, user_id, fit_id, choice)
+    if first:
         db.add(FitVote(user_id=user_id, fit_id=fit_id, choice=choice))
     db.flush()
+    return first
 
 
 def update_choice(db: Session, user_id: uuid.UUID, fit_id: uuid.UUID, choice: str) -> bool:

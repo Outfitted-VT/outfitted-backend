@@ -149,13 +149,15 @@ def get_by_client_id(db: Session, sender_id: uuid.UUID, client_id: str) -> Messa
     )
 
 
-def set_vote(db: Session, message_id: uuid.UUID, user_id: uuid.UUID, vote: str) -> None:
+def set_vote(db: Session, message_id: uuid.UUID, user_id: uuid.UUID, vote: str) -> bool:
+    """True for the member's first vote on the message."""
     existing = db.get(FitCheckVote, (message_id, user_id))
     if existing is None:
         db.add(FitCheckVote(message_id=message_id, user_id=user_id, vote=vote))
     else:
         existing.vote = vote
     db.flush()
+    return existing is None
 
 
 def vote_counts(db: Session, message_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict[str, int]]:
@@ -215,3 +217,9 @@ def users_with_fits_since(db: Session, user_ids: list[uuid.UUID], since: datetim
             )
         )
     )
+
+
+def total_unread(db: Session, user_id: uuid.UUID) -> int:
+    """Unread messages across the user's visible conversations."""
+    ids = [m.conversation_id for m in memberships(db, user_id)]
+    return sum(unread_counts(db, user_id, ids).values())

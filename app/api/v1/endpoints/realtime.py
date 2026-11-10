@@ -11,6 +11,7 @@ import json
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import SessionDep
@@ -27,6 +28,17 @@ UNAUTHORIZED = 4401
 TYPING_EVENTS = {"typing:start", "typing:stop"}
 
 
+async def _run(db: Session, fn, *args):
+    """Run a database call off the event loop, then end its transaction so an idle socket holds no connection."""
+    try:
+        result = await run_in_threadpool(fn, db, *args)
+    except Exception:
+        await run_in_threadpool(db.rollback)
+        raise
+    await run_in_threadpool(db.commit)
+    return result
+
+
 async def _authenticate(socket: WebSocket, db) -> User | None:
     try:
         first = await asyncio.wait_for(socket.receive_json(), AUTH_TIMEOUT_SECONDS)
@@ -37,7 +49,7 @@ async def _authenticate(socket: WebSocket, db) -> User | None:
     user_id = decode_access_token(str(first.get("token", "")))
     if user_id is None:
         return None
-    user = await run_in_threadpool(get_user, db, user_id)
+    user = await _run(db, get_user, user_id)
     return user if user is not None and user.is_active else None
 
 
@@ -67,10 +79,10 @@ async def _handle(socket: WebSocket, db, user: User, event: dict, members: set[u
     if conversation_id is None:
         return
     if conversation_id not in members:
-        if not await run_in_threadpool(service.is_member, db, user.id, conversation_id):
+        if not await _run(db, service.is_member, user.id, conversation_id):
             return
         members.add(conversation_id)
-    await run_in_threadpool(service.publish_typing, db, user, conversation_id, kind)
+    await _run(db, service.publish_typing, user, conversation_id, kind)
 
 
 @router.websocket("")
@@ -82,7 +94,7 @@ async def messaging_socket(socket: WebSocket, db: SessionDep) -> None:
         return
 
     if hub.add(user.id, socket):
-        await run_in_threadpool(service.touch_presence, db, user, True)
+        await _run(db, service.touch_presence, user, True)
     await socket.send_json({"type": "ready", "user_id": str(user.id)})
     members: set[uuid.UUID] = set()
     try:
@@ -94,4 +106,4 @@ async def messaging_socket(socket: WebSocket, db: SessionDep) -> None:
         pass
     finally:
         if hub.remove(user.id, socket):
-            await run_in_threadpool(service.touch_presence, db, user, False)
+            await _run(db, service.touch_presence, user, False)

@@ -83,6 +83,8 @@ def update_profile(db: Session, user: User, changes: UserUpdate) -> User:
             [user.avatar] = get_owned_images(db, user, [changes.avatar_image_id])
     for field in STYLE_PROFILE_FIELDS & fields:
         setattr(user, field, getattr(changes, field))
+    if "timezone" in fields and changes.timezone is not None:
+        user.timezone = changes.timezone
 
     try:
         db.commit()

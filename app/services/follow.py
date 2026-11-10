@@ -9,6 +9,8 @@ from app.core.pagination import decode_cursor, encode_cursor
 from app.models.user import User
 from app.repositories import fit as fit_repository
 from app.repositories import follow as follow_repository
+from app.services import notification as notifications
+from app.services import streak as streaks
 from app.services.fit import FitPage, paginate
 from app.services.user import get_user_by_username
 
@@ -28,6 +30,7 @@ class ProfileView:
     follower_count: int
     following_count: int
     is_following: bool
+    current_streak: int
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,7 @@ def get_profile(db: Session, viewer: User, username: str) -> ProfileView:
         follower_count=follow_repository.follower_count(db, user.id),
         following_count=follow_repository.following_count(db, user.id),
         is_following=follow_repository.exists(db, viewer.id, user.id),
+        current_streak=streaks.current_streak(db, user),
     )
 
 
@@ -67,6 +71,8 @@ def follow(db: Session, follower: User, username: str) -> None:
     except IntegrityError:
         # A concurrent duplicate request already created the follow.
         db.rollback()
+        return
+    notifications.notify(db, followee.id, "follow", actor=follower, entity_type="user", entity_id=follower.id)
 
 
 def unfollow(db: Session, follower: User, username: str) -> None:

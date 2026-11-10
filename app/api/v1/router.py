@@ -4,6 +4,7 @@ from app.api.v1.endpoints import (
     auth,
     conversations,
     detections,
+    devices,
     fits,
     health,
     images,
@@ -11,8 +12,10 @@ from app.api.v1.endpoints import (
     memories,
     message_actions,
     messages,
+    notifications,
     realtime,
     sizing,
+    stories,
     tryons,
     users,
     wardrobe,
@@ -30,6 +33,9 @@ api_router.include_router(messages.router, prefix="/messages", tags=["messages"]
 api_router.include_router(message_actions.router, prefix="/messages", tags=["messages"])
 api_router.include_router(conversations.router, prefix="/conversations", tags=["conversations"])
 api_router.include_router(realtime.router, prefix="/ws", tags=["realtime"])
+api_router.include_router(stories.router, prefix="/stories", tags=["stories"])
+api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
+api_router.include_router(devices.router, prefix="/devices", tags=["devices"])
 api_router.include_router(tryons.router, prefix="/tryons", tags=["try-on"])
 api_router.include_router(detections.router, prefix="/detections", tags=["detection"])
 api_router.include_router(sizing.router, prefix="/sizing", tags=["sizing"])

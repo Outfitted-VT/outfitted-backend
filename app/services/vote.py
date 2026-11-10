@@ -11,14 +11,15 @@ from sqlalchemy.orm import Session
 
 from app.models.user import User
 from app.repositories import vote as vote_repository
+from app.services import notification as notifications
 from app.services.fit import get_fit
 
 
 def cast_vote(db: Session, user: User, fit_id: uuid.UUID, choice: str) -> None:
     """Record or change the user's vote. Raises FitNotFoundError."""
-    get_fit(db, fit_id)
+    fit = get_fit(db, fit_id)
     try:
-        vote_repository.set_vote(db, user.id, fit_id, choice)
+        first = vote_repository.set_vote(db, user.id, fit_id, choice)
         db.commit()
     except IntegrityError:
         # Another request inserted this user's first vote at the same moment.
@@ -26,6 +27,9 @@ def cast_vote(db: Session, user: User, fit_id: uuid.UUID, choice: str) -> None:
         db.rollback()
         vote_repository.update_choice(db, user.id, fit_id, choice)
         db.commit()
+        return
+    if first:
+        notifications.notify(db, fit.user_id, "fit_vote", actor=user, entity_type="fit", entity_id=fit.id)
 
 
 def retract_vote(db: Session, user: User, fit_id: uuid.UUID) -> None:

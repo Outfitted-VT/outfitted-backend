@@ -133,3 +133,5 @@ class CirclePerson(BaseModel):
     online: bool
     last_seen_at: UtcDatetime | None
     has_live_fit_check: bool
+    has_active_story: bool = False
+    has_unseen_story: bool = False

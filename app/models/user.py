@@ -34,5 +34,6 @@ class User(TimestampMixin, Base):
     feedback_tone: Mapped[str | None] = mapped_column(String(10))
 
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC", server_default="UTC")
 
     avatar: Mapped[Image | None] = relationship(foreign_keys=[avatar_image_id], lazy="joined")

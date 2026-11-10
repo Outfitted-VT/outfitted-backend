@@ -64,6 +64,16 @@ class Settings(BaseSettings):
     DETECTION_DAILY_LIMIT: int = 200
     DETECTION_TIMEOUT_SECONDS: int = 60
 
+    RUN_SCHEDULER: bool = False
+
+    APNS_KEY_ID: str | None = None
+    APNS_TEAM_ID: str | None = None
+    APNS_BUNDLE_ID: str | None = None
+    APNS_KEY_PATH: str | None = None
+    APNS_USE_SANDBOX: bool = True
+    FCM_PROJECT_ID: str | None = None
+    FCM_CREDENTIALS_PATH: str | None = None
+
     # Ignore settings we no longer use (e.g. SERPAPI_API_KEY from the removed shop search), so an
     # older .env still starts the server.
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
@@ -99,6 +109,14 @@ class Settings(BaseSettings):
         if self.TRYON_LOCATION:
             return self.TRYON_LOCATION
         return "us-central1" if self.TRYON_MODEL.startswith("virtual-try-on") else "global"
+
+    @property
+    def apns_configured(self) -> bool:
+        return all((self.APNS_KEY_ID, self.APNS_TEAM_ID, self.APNS_BUNDLE_ID, self.APNS_KEY_PATH))
+
+    @property
+    def fcm_configured(self) -> bool:
+        return bool(self.FCM_PROJECT_ID and self.FCM_CREDENTIALS_PATH)
 
     @property
     def refresh_cookie_path(self) -> str:

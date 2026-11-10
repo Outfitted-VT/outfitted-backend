@@ -9,7 +9,7 @@ from app.db.mixins import utcnow
 from app.models.user import User
 
 CONVERSATION_TYPES = ("direct", "circle")
-MESSAGE_KINDS = ("text", "image", "fit_check", "product")
+MESSAGE_KINDS = ("text", "image", "fit_check", "product", "story_reply")
 FIT_CHECK_VOTES = ("wear", "rethink")
 
 

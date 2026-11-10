@@ -19,7 +19,19 @@ fastapi dev app/main.py
 
 - API: http://localhost:8000
 - Docs: http://localhost:8000/docs
-- Frontend guide: [docs/API.md](docs/API.md)
+- Frontend guide: [docs/API.md](docs/API.md), and exact payloads for stories, streaks, notifications and
+  devices in [docs/FRONTEND_CONTRACT.md](docs/FRONTEND_CONTRACT.md)
+
+Background jobs (streak reminders and checks, hourly; story cleanup, daily) run inside the app when
+`RUN_SCHEDULER=true`. Turn it on in exactly one process.
+
+## Push notifications
+
+Without credentials, pushes are logged (`INFO: app.push - push (not sent, no provider) ...`) instead of
+sent, so everything else works locally. To send for real, set the `APNS_*` settings (token-based `.p8`
+auth; `APNS_USE_SANDBOX=true` for builds run from Xcode, `false` for TestFlight and App Store) and/or `FCM_PROJECT_ID` and
+`FCM_CREDENTIALS_PATH` (a service account key). iOS tokens go to APNs and Android tokens to FCM. See
+`.env.example`.
 
 ## Virtual try-on and piece detection
 
@@ -47,6 +59,12 @@ Always review the generated file in `alembic/versions/` before applying it.
 
 ```bash
 pytest
+```
+
+End-to-end messaging, stories and notifications against a running server (creates fresh users):
+
+```bash
+python -m scripts.smoke_messaging http://localhost:8000
 ```
 
 ## Structure

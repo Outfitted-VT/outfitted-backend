@@ -110,6 +110,7 @@ def list_messages(
     responses={
         **NOT_FOUND,
         status.HTTP_400_BAD_REQUEST: {"model": ErrorResponse, "description": "Image not found or not yours."},
+        status.HTTP_409_CONFLICT: {"model": ErrorResponse, "description": "client_id already used in another conversation."},
         status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse, "description": "Sending too fast."},
     },
 )
@@ -131,6 +132,10 @@ def send_message(
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="You're sending messages too fast. Wait a moment.",
+        ) from None
+    except service.ClientIdConflictError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="client_id was already used in another conversation"
         ) from None
 
 

@@ -8,23 +8,29 @@ from sqlalchemy.orm import Session
 from app.core.pagination import decode_cursor
 from app.models.user import User
 from app.repositories import engagement as engagement_repository
+from app.services import notification as notifications
 from app.services.fit import FitPage, get_fit, paginate
 
 
-def _add_once(db: Session, exists, add, user: User, fit_id: uuid.UUID) -> None:
+def _add_once(db: Session, exists, add, user: User, fit_id: uuid.UUID) -> bool:
+    """True when this call added it."""
     get_fit(db, fit_id)  # raises FitNotFoundError
     if exists(db, user.id, fit_id):
-        return
+        return False
     try:
         add(db, user.id, fit_id)
         db.commit()
     except IntegrityError:
         # The same user did it twice at the same moment (e.g. a double tap); one insert won.
         db.rollback()
+        return False
+    return True
 
 
 def like_fit(db: Session, user: User, fit_id: uuid.UUID) -> None:
-    _add_once(db, engagement_repository.has_liked, engagement_repository.add_like, user, fit_id)
+    if _add_once(db, engagement_repository.has_liked, engagement_repository.add_like, user, fit_id):
+        fit = get_fit(db, fit_id)
+        notifications.notify(db, fit.user_id, "like", actor=user, entity_type="fit", entity_id=fit.id)
 
 
 def unlike_fit(db: Session, user: User, fit_id: uuid.UUID) -> None:

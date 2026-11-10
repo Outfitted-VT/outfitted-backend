@@ -13,8 +13,10 @@ from app.models.user import User
 from app.repositories import comment as comment_repository
 from app.repositories import engagement as engagement_repository
 from app.repositories import fit as fit_repository
+from app.repositories import story as story_repository
 from app.repositories import vote as vote_repository
 from app.schemas.fit import FitCreate, FitItemIn, FitUpdate
+from app.services import streak as streaks
 from app.services.image import get_owned_images
 from app.storage import Storage
 
@@ -169,6 +171,8 @@ def create_fit(db: Session, author: User, data: FitCreate) -> Fit:
         # Another request attached one of these images to a fit at the same time.
         db.rollback()
         raise ImageAlreadyUsedError from None
+    if fit.privacy_tier != "vault":
+        streaks.record_activity(db, author)
     return fit_repository.get(db, fit.id)
 
 
@@ -216,9 +220,10 @@ def update_fit_privacy(
 
 
 def delete_fit(db: Session, storage: Storage, editor: User, fit_id: uuid.UUID) -> None:
-    """Delete the fit and its photos, except a photo also used as the editor's avatar."""
+    """Delete the fit and its photos, except a photo also used as the editor's avatar or in a story."""
     fit = _get_own_fit(db, editor, fit_id)
-    images = [image for image in fit.images if image.id != editor.avatar_image_id]
+    in_stories = story_repository.image_ids_in_use(db, [image.id for image in fit.images])
+    images = [image for image in fit.images if image.id != editor.avatar_image_id and image.id not in in_stories]
 
     fit_repository.delete(db, fit)
     for image in images:

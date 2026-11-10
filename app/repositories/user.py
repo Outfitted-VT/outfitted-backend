@@ -13,6 +13,12 @@ def get(db: Session, user_id: uuid.UUID) -> User | None:
     return db.get(User, user_id)
 
 
+def get_many(db: Session, user_ids: list[uuid.UUID]) -> list[User]:
+    if not user_ids:
+        return []
+    return list(db.scalars(select(User).where(User.id.in_(user_ids))))
+
+
 def get_by_email(db: Session, email: str) -> User | None:
     return db.scalar(select(User).where(User.email == email.lower()))
 
@@ -65,6 +71,14 @@ def circle_ids(user_id: uuid.UUID):
     following = select(Follow.followee_id).where(Follow.follower_id == user_id)
     followers = select(Follow.follower_id).where(Follow.followee_id == user_id)
     return following.union(followers)
+
+
+def mutual_ids(user_id: uuid.UUID):
+    """Subquery of a user's close friends: people they follow who follow them back."""
+    following = select(Follow.followee_id).where(Follow.follower_id == user_id)
+    return select(Follow.follower_id).where(
+        Follow.followee_id == user_id, Follow.follower_id.in_(following)
+    )
 
 
 def suggestions(db: Session, user_id: uuid.UUID, *, limit: int) -> list[tuple[User, int]]:
