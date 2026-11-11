@@ -117,9 +117,9 @@ def test_merged_row_comes_back_unread(client: TestClient, maya, leo, ivy, upload
 def test_comment_and_fit_vote(client: TestClient, maya, leo, ivy, upload_image) -> None:
     fit = post_fit(client, maya, upload_image)
     client.post(f"/api/v1/fits/{fit}/comments", headers=leo.headers, json={"content": "Love the jacket"})
-    client.put(f"/api/v1/fits/{fit}/vote", headers=leo.headers, json={"choice": "wear"})
-    client.put(f"/api/v1/fits/{fit}/vote", headers=leo.headers, json={"choice": "rethink"})
-    client.put(f"/api/v1/fits/{fit}/vote", headers=ivy.headers, json={"choice": "wear"})
+    client.put(f"/api/v1/fits/{fit}/vote", headers=leo.headers, json={"option": 0})
+    client.put(f"/api/v1/fits/{fit}/vote", headers=leo.headers, json={"option": 1})
+    client.put(f"/api/v1/fits/{fit}/vote", headers=ivy.headers, json={"option": 0})
 
     by_type = {n["type"]: n for n in notifications(client, maya)}
     assert by_type["comment"]["body"] == "Leo commented: “Love the jacket”"

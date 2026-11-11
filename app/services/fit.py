@@ -41,6 +41,10 @@ class InvalidItemPinError(Exception):
     pass
 
 
+class PollLockedError(Exception):
+    """The poll can't change once anyone has voted on it."""
+
+
 @dataclass(frozen=True)
 class FitView:
     """A fit as seen by a particular viewer."""
@@ -50,8 +54,8 @@ class FitView:
     liked_by_me: bool
     saved_by_me: bool
     comment_count: int = 0
-    vote_counts: dict[str, int] = field(default_factory=dict)
-    my_vote: str | None = None
+    vote_counts: dict[int, int] = field(default_factory=dict)
+    my_vote: int | None = None
 
 
 @dataclass(frozen=True)
@@ -160,6 +164,8 @@ def create_fit(db: Session, author: User, data: FitCreate) -> Fit:
         privacy_tier=getattr(data, "privacy_tier", "public"),
         allow_friend_try_on=getattr(data, "allow_friend_try_on", True),
         tryon_id=data.tryon_id,
+        poll_question=data.poll.question if data.poll else None,
+        poll_options=data.poll.options if data.poll else None,
         fit_images=[FitImage(image=image, position=i) for i, image in enumerate(images)],
         items=_build_items(data.items),
         tags=_build_tags(data.occasion_tags, data.style_tags),
@@ -181,6 +187,7 @@ def get_fit(db: Session, fit_id: uuid.UUID) -> Fit:
 
 
 def update_fit(db: Session, editor: User, fit_id: uuid.UUID, changes: FitUpdate) -> Fit:
+    """Raises PollLockedError when changing a poll someone has voted on."""
     fit = _get_own_fit(db, editor, fit_id)
     fields = changes.model_fields_set
 
@@ -202,6 +209,13 @@ def update_fit(db: Session, editor: User, fit_id: uuid.UUID, changes: FitUpdate)
         fit.privacy_tier = changes.privacy_tier
     if "allow_friend_try_on" in fields and changes.allow_friend_try_on is not None:
         fit.allow_friend_try_on = changes.allow_friend_try_on
+    if "poll" in fields:
+        poll = (changes.poll.question, changes.poll.options) if changes.poll else (None, None)
+        if poll != (fit.poll_question, fit.poll_options):
+            # Votes point at answers by position, so a voted-on poll stays as it is.
+            if vote_repository.has_votes(db, fit.id):
+                raise PollLockedError
+            fit.poll_question, fit.poll_options = poll
 
     db.commit()
     return fit_repository.get(db, fit.id)

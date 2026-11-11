@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, Text, Uuid
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -32,6 +32,10 @@ class Fit(TimestampMixin, Base):
     # The try-on this fit's photo came from, if any. Its clothing photos let others "Try this
     # look"; the try-on's person photo is never shared.
     tryon_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tryons.id", ondelete="SET NULL"))
+    # The poll viewers answer: a question and 2–4 answers, or both None for no poll. Votes
+    # (FitVote.option) refer to the answers by position.
+    poll_question: Mapped[str | None] = mapped_column(String(100))
+    poll_options: Mapped[list[str] | None] = mapped_column(JSON)
 
     author: Mapped[User] = relationship()
     tryon: Mapped[TryOn | None] = relationship()
