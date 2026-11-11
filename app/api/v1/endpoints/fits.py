@@ -19,6 +19,7 @@ from app.services.fit import (
     ImageAlreadyUsedError,
     InvalidItemPinError,
     NotFitOwnerError,
+    PollLockedError,
     TryOnNotFoundError,
     create_fit,
     delete_fit,
@@ -137,6 +138,7 @@ def read_fit(fit_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> Fi
             status.HTTP_400_BAD_REQUEST,
             "Each item pin must reference one of the fit's images",
         ),
+        **_error(status.HTTP_409_CONFLICT, "The poll can't change after people have voted"),
     },
 )
 def edit_fit(
@@ -158,6 +160,11 @@ def edit_fit(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Each item pin must reference one of the fit's images",
+        ) from None
+    except PollLockedError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The poll can't change after people have voted",
         ) from None
     return FitRead.from_view(describe_fit(db, current_user, fit))
 
@@ -321,21 +328,29 @@ def delete_comment(
     "/{fit_id}/vote",
     response_model=FitRead,
     summary="Vote on a fit",
-    responses=FIT_NOT_FOUND,
+    responses={
+        **FIT_NOT_FOUND,
+        **_error(status.HTTP_400_BAD_REQUEST, "No such poll answer"),
+        **_error(status.HTTP_409_CONFLICT, "This fit has no poll"),
+    },
 )
 def vote(
     fit_id: uuid.UUID, data: FitVoteIn, current_user: CurrentUser, db: SessionDep
 ) -> FitRead:
-    """Record your "wear it" or "rethink" verdict.
+    """Answer the fit's poll: `option` is the index of the answer.
 
-    One vote per person per fit: voting again replaces your previous choice, so
+    One vote per person per fit: voting again replaces your previous answer, so
     this is idempotent. Returns the fit with the updated tallies, which saves the
-    client a second request to redraw the result bar.
+    client a second request to redraw the results.
     """
     try:
-        vote_service.cast_vote(db, current_user, fit_id, data.choice)
+        vote_service.cast_vote(db, current_user, fit_id, data.option)
     except FitNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fit not found") from None
+    except vote_service.NoPollError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This fit has no poll") from None
+    except vote_service.InvalidPollOptionError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No such poll answer") from None
     return FitRead.from_view(describe_fit(db, current_user, get_fit(db, fit_id)))
 
 

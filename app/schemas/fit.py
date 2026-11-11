@@ -15,7 +15,7 @@ from pydantic import (
 from app.schemas.image import ImageRead
 from app.schemas.tryon import TryOnPieceRead
 from app.schemas.user import OptionalText, UserSummary, UtcDatetime
-from app.schemas.vote import VoteChoice, VoteCounts
+from app.schemas.vote import PollIn, PollRead, default_poll
 
 MAX_IMAGES_PER_FIT = 10
 MAX_ITEMS_PER_FIT = 30
@@ -140,6 +140,11 @@ class FitCreate(BaseModel):
         description="Posting a try-on: the try-on it came from (`POST /tryons`), so others "
         "can try the same clothes. Must be your own try-on.",
     )
+    poll: PollIn | None = Field(
+        default_factory=default_poll,
+        description='The poll viewers answer. Left out: "Would you wear it?" with "Wear it" / '
+        '"Rethink". `null`: no poll.',
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -188,6 +193,10 @@ class FitUpdate(BaseModel):
     style_tags: Tags | None = Field(default=None, description="Replaces them when sent.")
     privacy_tier: Literal["public", "close_friends", "vault"] | None = None
     allow_friend_try_on: bool | None = None
+    poll: PollIn | None = Field(
+        default=None,
+        description="Replaces the poll when sent; `null` removes it. Only until someone votes.",
+    )
 
     @field_validator("items", "occasion_tags", "style_tags")
     @classmethod
@@ -233,8 +242,7 @@ class FitRead(BaseModel):
     comment_count: int = 0
     liked_by_me: bool
     saved_by_me: bool
-    votes: VoteCounts = VoteCounts()
-    my_vote: VoteChoice | None = None
+    poll: PollRead | None = None
     privacy_tier: str = "public"
     allow_friend_try_on: bool = True
     try_on_source: TryOnSource | None = None
@@ -255,8 +263,7 @@ class FitRead(BaseModel):
             comment_count=getattr(view, "comment_count", 0),
             liked_by_me=view.liked_by_me,
             saved_by_me=view.saved_by_me,
-            votes=VoteCounts(**getattr(view, "vote_counts", {})),
-            my_vote=getattr(view, "my_vote", None),
+            poll=PollRead.of(fit, getattr(view, "vote_counts", {}), getattr(view, "my_vote", None)),
             privacy_tier=getattr(fit, "privacy_tier", "public"),
             allow_friend_try_on=getattr(fit, "allow_friend_try_on", True),
             try_on_source=TryOnSource.of(fit),

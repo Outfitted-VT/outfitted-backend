@@ -1,20 +1,16 @@
 import uuid
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.db.mixins import TimestampMixin
 
-# A viewer's verdict on a fit. Stored as a short string, like the other
-# enum-ish columns in this app (Fit.privacy_tier, FitItem.category).
-VOTE_CHOICES = ("wear", "rethink")
-
 
 class FitVote(TimestampMixin, Base):
-    """One viewer's verdict on a fit: "wear it" or "rethink".
+    """One viewer's answer to a fit's poll (Fit.poll_options).
 
-    One row per (user, fit). Changing your mind updates `choice` rather than
+    One row per (user, fit). Changing your mind updates `option` rather than
     adding a second vote — `updated_at` records when — and retracting deletes
     the row. A fit's author may vote on their own fit.
     """
@@ -27,4 +23,6 @@ class FitVote(TimestampMixin, Base):
     fit_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("fits.id", ondelete="CASCADE"), primary_key=True, index=True
     )
-    choice: Mapped[str] = mapped_column(String(10))
+    # Index into the fit's poll_options. The poll can't change once anyone has voted, so
+    # the index keeps pointing at the same answer.
+    option: Mapped[int] = mapped_column(Integer)

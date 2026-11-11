@@ -713,16 +713,21 @@ Every endpoint that returns fits uses this shape:
   "like_count": 1,
   "liked_by_me": true,
   "saved_by_me": false,
-  "votes": { "wear": 9, "rethink": 3 },
-  "my_vote": "wear",
+  "poll": {
+    "question": "Would you wear it?",
+    "options": [{ "label": "Wear it", "votes": 9 }, { "label": "Rethink", "votes": 3 }],
+    "total_votes": 12,
+    "my_vote": 0,
+    "locked": true
+  },
   "try_on_source": null,
   "created_at": "2026-10-19T20:23:53.789725Z"
 }
 ```
 
 - `images` are in display order (first = cover).
-- `liked_by_me` / `saved_by_me` / `my_vote` are for **the current user**.
-- `votes` is the tally everyone sees; `my_vote` is `"wear"`, `"rethink"` or `null`. See [Voting](#voting).
+- `liked_by_me` / `saved_by_me` / `poll.my_vote` are for **the current user**.
+- `poll` is `null` when the poster chose no poll. Otherwise each answer has the tally everyone sees; `my_vote` is the index of your answer or `null`, and `locked` is `true` once anyone has voted (the poll can't change then). See [Voting](#voting).
 - `try_on_source` is set when the fit was posted from a try-on and its author allows try-ons: `{ "mode": "outfit" | "pieces", "outfit_image": image | null, "pieces": [{ "slot", "image" }] }`, the same shapes as a try-on's. See [Try this look](#try-this-look).
 - **Item pins:** `x` and `y` are fractions (0–1) of the image's width and height, measured from the top-left. To draw a pin, position it at `left: x * 100%; top: y * 100%` over the image named by `pin.image_id`. Items without a pin have `pin: null`.
 - **Categories:** `top`, `bottom`, `dress`, `outerwear`, `shoes`, `bag`, `accessory`, `jewelry`, `headwear`, `other`.
@@ -745,6 +750,7 @@ Every endpoint that returns fits uses this shape:
 | `occasion_tags` | no | Up to 10, each 1–30 characters. Stored lowercase; duplicates are dropped. |
 | `style_tags` | no | Same rules. |
 | `tryon_id` | no | Posting a try-on: the try-on's `id`, so others can [try this look](#try-this-look). Must be one of your try-ons, or `400 "Try-on not found"`. |
+| `poll` | no | `{ "question": "Rate this fit", "options": ["Fire", "Solid", "Meh"] }`: a question (1–100 characters) and 2–4 different answers (1–30 characters each). Left out: "Would you wear it?" with "Wear it" / "Rethink". `null`: no poll. |
 
 **Item fields:** `category` (required, one of the categories above), `name` (required, 1–100 chars), `brand` (≤100), `color`, `pattern`, `material`, `silhouette` (each ≤50), `url` (a valid `http(s)` link), `pin` (`{ image_id, x, y }` where `image_id` is one of this fit's `image_ids` and `x`/`y` are 0–1), `source` (`"user"`, the default, or `"detected"`; keep `"detected"` when the user edits a detected item).
 
@@ -831,9 +837,9 @@ Suggests the clothing pieces and occasion/style tags in one of your photos, so p
 
 `PATCH /fits/{fit_id}` 🔒
 
-Send any of `caption`, `items`, `occasion_tags`, `style_tags`. Omitted fields stay the same. **Lists replace the whole list**: send every item or tag you want to keep (send `[]` to remove all). Photos can't be changed after posting.
+Send any of `caption`, `items`, `occasion_tags`, `style_tags`, `poll`. Omitted fields stay the same. **Lists replace the whole list**: send every item or tag you want to keep (send `[]` to remove all). Photos can't be changed after posting. `poll` replaces the poll (`null` removes it), but only until someone votes (`poll.locked`); sending the same poll again is fine.
 
-**Responses:** `200` with the updated fit · `400` `{"detail": "Each item pin must reference one of the fit's images"}` · `403` `{"detail": "You can only change your own fits"}` · `404`.
+**Responses:** `200` with the updated fit · `400` `{"detail": "Each item pin must reference one of the fit's images"}` · `403` `{"detail": "You can only change your own fits"}` · `404` · `409` `{"detail": "The poll can't change after people have voted"}`.
 
 ### Delete your fit
 
@@ -905,8 +911,8 @@ async function toggleLike(fit: Fit) {
 
 ## Voting
 
-The "wear it or rethink" verdict on a fit — the quick yes/no a poster is asking
-their friends for.
+Answering a fit's poll — "Would you wear it?" unless the poster picked their own
+question and answers (see `poll` on [Post a fit](#post-a-fit)).
 
 | Action | Request | Response |
 |---|---|---|
@@ -914,8 +920,9 @@ their friends for.
 | Retract | `DELETE /fits/{fit_id}/vote` | `200` → [the fit object](#the-fit-object) |
 
 - Both 🔒. `404` `{"detail": "Fit not found"}` if the fit doesn't exist.
-- **Request body** (vote only): `{"choice": "wear"}` or `{"choice": "rethink"}`. Any
-  other value is a `422`.
+- **Request body** (vote only): `{"option": 0}`, the index of the answer in `poll.options`.
+  Past the last answer: `400` `{"detail": "No such poll answer"}`. A fit posted without a
+  poll: `409` `{"detail": "This fit has no poll"}`.
 - **One vote per person per fit.** Voting again replaces your previous choice rather
   than adding a second vote, so both calls are idempotent. Retracting when you never
   voted is a no-op, not an error.
@@ -925,14 +932,14 @@ their friends for.
 
 ```ts
 // Optimistic vote, reconciled with the server's tallies
-async function vote(fit: Fit, choice: "wear" | "rethink" | null) {
+async function vote(fit: Fit, option: number | null) {
   const previous = fit;
-  setFit(optimisticVote(fit, choice));   // move the bar straight away
+  setFit(optimisticVote(fit, option));   // move the bars straight away
   const res = await apiFetch(`/fits/${fit.id}/vote`, {
-    method: choice ? "PUT" : "DELETE",
-    ...(choice && {
+    method: option === null ? "DELETE" : "PUT",
+    ...(option !== null && {
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ choice }),
+      body: JSON.stringify({ option }),
     }),
   });
   if (!res.ok) return setFit(previous);  // roll back
