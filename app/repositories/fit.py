@@ -8,6 +8,25 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.pagination import Cursor
 from app.models.fit import Fit, FitImage
 from app.models.user import User
+from app.repositories.user import mutual_ids
+
+
+def visible_to(viewer_id: uuid.UUID):
+    """Who sees a fit: its author always; everyone if public; for close_friends ("Friends"),
+    only people the author follows who follow them back. Vault fits: the author only."""
+    return or_(
+        Fit.user_id == viewer_id,
+        Fit.privacy_tier == "public",
+        and_(Fit.privacy_tier == "close_friends", Fit.user_id.in_(mutual_ids(viewer_id))),
+    )
+
+
+def is_visible(db: Session, fit: Fit, viewer_id: uuid.UUID) -> bool:
+    if fit.user_id == viewer_id or fit.privacy_tier == "public":
+        return True
+    if fit.privacy_tier != "close_friends":
+        return False
+    return db.scalar(select(Fit.id).where(Fit.id == fit.id, visible_to(viewer_id))) is not None
 
 
 def with_details(statement: Select) -> Select:
@@ -58,8 +77,8 @@ def list_newest(
 
     Enforces Closet Privacy Tiers:
     - Explore feed (public_only=True): public fits only.
-    - Other users' profiles: public and close_friends (vault excluded).
-    - Own profile: all fits including vault drafts.
+    - Otherwise, with a viewer: what `visible_to` allows (their own fits, public fits, and
+      close_friends fits by people they follow who follow them back).
     """
     statement = select(Fit).join(Fit.author).where(User.is_active)
 
@@ -67,15 +86,15 @@ def list_newest(
         statement = statement.where(Fit.privacy_tier == "public")
     elif user_id is not None:
         statement = statement.where(Fit.user_id == user_id)
-        if viewer_id != user_id:
-            statement = statement.where(Fit.privacy_tier != "vault")
     elif user_ids is not None:
         authors = Fit.user_id.in_(user_ids)
         if include_user_id is not None:
             authors = or_(authors, Fit.user_id == include_user_id)
         statement = statement.where(authors)
-        # In following feed, exclude vault drafts
-        statement = statement.where(Fit.privacy_tier != "vault")
+    if not public_only:
+        if viewer_id is None:
+            raise ValueError("list_newest needs a viewer_id unless public_only")
+        statement = statement.where(visible_to(viewer_id))
 
     if cursor is not None:
         statement = statement.where(

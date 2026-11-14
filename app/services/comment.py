@@ -13,7 +13,7 @@ from app.services.fit import get_fit
 
 def add_comment(db: Session, author: User, fit_id: uuid.UUID, content: str) -> FitComment:
     """Raises FitNotFoundError."""
-    fit = get_fit(db, fit_id)
+    fit = get_fit(db, fit_id, author)
     comment = comment_repository.add_comment(db, fit_id, author.id, content)
     db.commit()
     data = {"comment_id": str(comment.id), "preview": content}

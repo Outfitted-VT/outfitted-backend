@@ -182,8 +182,13 @@ def create_fit(db: Session, author: User, data: FitCreate) -> Fit:
     return fit_repository.get(db, fit.id)
 
 
-def get_fit(db: Session, fit_id: uuid.UUID) -> Fit:
-    return _get_visible_fit(db, fit_id)
+def get_fit(db: Session, fit_id: uuid.UUID, viewer: User) -> Fit:
+    """Raises FitNotFoundError, also when the viewer isn't allowed to see it (Friends or
+    Vault), so its existence isn't revealed."""
+    fit = _get_visible_fit(db, fit_id)
+    if not fit_repository.is_visible(db, fit, viewer.id):
+        raise FitNotFoundError
+    return fit
 
 
 def update_fit(db: Session, editor: User, fit_id: uuid.UUID, changes: FitUpdate) -> Fit:

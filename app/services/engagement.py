@@ -14,7 +14,7 @@ from app.services.fit import FitPage, get_fit, paginate
 
 def _add_once(db: Session, exists, add, user: User, fit_id: uuid.UUID) -> bool:
     """True when this call added it."""
-    get_fit(db, fit_id)  # raises FitNotFoundError
+    get_fit(db, fit_id, user)  # raises FitNotFoundError
     if exists(db, user.id, fit_id):
         return False
     try:
@@ -29,12 +29,12 @@ def _add_once(db: Session, exists, add, user: User, fit_id: uuid.UUID) -> bool:
 
 def like_fit(db: Session, user: User, fit_id: uuid.UUID) -> None:
     if _add_once(db, engagement_repository.has_liked, engagement_repository.add_like, user, fit_id):
-        fit = get_fit(db, fit_id)
+        fit = get_fit(db, fit_id, user)
         notifications.notify(db, fit.user_id, "like", actor=user, entity_type="fit", entity_id=fit.id)
 
 
 def unlike_fit(db: Session, user: User, fit_id: uuid.UUID) -> None:
-    get_fit(db, fit_id)
+    get_fit(db, fit_id, user)
     engagement_repository.remove_like(db, user.id, fit_id)
     db.commit()
 
@@ -44,7 +44,7 @@ def save_fit(db: Session, user: User, fit_id: uuid.UUID) -> None:
 
 
 def unsave_fit(db: Session, user: User, fit_id: uuid.UUID) -> None:
-    get_fit(db, fit_id)
+    get_fit(db, fit_id, user)
     engagement_repository.remove_save(db, user.id, fit_id)
     db.commit()
 
