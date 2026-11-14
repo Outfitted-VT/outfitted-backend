@@ -46,6 +46,8 @@ class ConversationMember(Base):
     last_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     muted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When this member deleted the chat: they don't see messages from before it. Others still do.
+    cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, server_default=func.now()
     )
