@@ -128,6 +128,10 @@ def send_message(
         raise _not_found() from None
     except ImageNotFoundError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image not found") from None
+    except service.FitNotShareableError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="This fit can't be shared with everyone in this chat"
+        ) from None
     except service.RateLimitedError:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

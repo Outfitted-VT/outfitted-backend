@@ -52,7 +52,7 @@ class ProductIn(BaseModel):
 
 
 class MessageCreate(BaseModel):
-    kind: Literal["text", "image", "fit_check", "product"]
+    kind: Literal["text", "image", "fit_check", "product", "fit"]
     body: Annotated[str | None, Field(max_length=settings.MESSAGE_MAX_LENGTH), CleanText] = None
     image_id: uuid.UUID | None = None
     question: Annotated[str | None, Field(max_length=280), CleanText] = None
@@ -68,6 +68,7 @@ class MessageCreate(BaseModel):
             "image": ("image_id",),
             "fit_check": ("image_id", "question"),
             "product": ("product",),
+            "fit": ("fit_id",),
         }[self.kind]
         missing = [field for field in required if getattr(self, field) is None]
         if missing:

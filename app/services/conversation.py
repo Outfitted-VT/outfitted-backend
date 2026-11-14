@@ -14,6 +14,7 @@ from app.models.conversation import Conversation, ConversationMember, Message
 from app.models.user import User
 from app.realtime import hub
 from app.repositories import conversation as repo
+from app.repositories import fit as fit_repository
 from app.repositories import image as image_repository
 from app.repositories import story as story_repository
 from app.schemas.conversation import (
@@ -67,6 +68,10 @@ class RateLimitedError(Exception):
     pass
 
 
+class FitNotShareableError(Exception):
+    """A shared fit that doesn't exist, or that someone in the chat isn't allowed to see."""
+
+
 class ClientIdConflictError(Exception):
     """The client_id was already used for a message in another conversation."""
 
@@ -102,10 +107,26 @@ def _image_ids(message: Message) -> list[uuid.UUID]:
     return [uuid.UUID(i) for i in ids if i]
 
 
-def _resolve_payload(message: Message, images: dict[uuid.UUID, ImageRead]) -> dict | None:
+def _fit_card(fit) -> dict | None:
+    """What a shared fit shows in the chat: its first photo, caption and poster."""
+    if fit is None or not fit.author.is_active:
+        return None
+    image = fit.images[0] if fit.images else None
+    return {
+        "id": str(fit.id),
+        "caption": fit.caption,
+        "author": {"username": fit.author.username, "full_name": fit.author.full_name},
+        "image": ImageRead.model_validate(image).model_dump(mode="json") if image else None,
+    }
+
+
+def _resolve_payload(message: Message, images: dict[uuid.UUID, ImageRead], fits: dict | None = None) -> dict | None:
     if message.deleted_at is not None or not message.payload:
         return None
     payload = dict(message.payload)
+    if message.kind == "fit":
+        # null when the fit was deleted since (the chat shows "no longer available").
+        return {"fit": (fits or {}).get(payload.get("fit_id"))}
     image_id = payload.pop("image_id", None)
     if image_id:
         payload["image"] = images.get(uuid.UUID(image_id))
@@ -121,6 +142,8 @@ def _resolve_payload(message: Message, images: dict[uuid.UUID, ImageRead]) -> di
 def message_views(db: Session, viewer_id: uuid.UUID | None, messages: list[Message]) -> list[MessageRead]:
     image_ids = [i for m in messages for i in _image_ids(m)]
     images = {i.id: ImageRead.model_validate(i) for i in image_repository.get_many(db, image_ids)} if image_ids else {}
+    fit_ids = {(m.payload or {}).get("fit_id") for m in messages if m.kind == "fit"} - {None}
+    fits = {i: _fit_card(fit_repository.get(db, uuid.UUID(i))) for i in fit_ids}
     checks = [m.id for m in messages if m.kind == "fit_check"]
     counts = repo.vote_counts(db, checks)
     mine = repo.votes_by_user(db, viewer_id, checks) if viewer_id else {}
@@ -131,7 +154,7 @@ def message_views(db: Session, viewer_id: uuid.UUID | None, messages: list[Messa
             sender=_summary(m.sender),
             kind=m.kind,
             body=None if m.deleted_at else m.body,
-            payload=_resolve_payload(m, images),
+            payload=_resolve_payload(m, images, fits),
             client_id=m.client_id,
             created_at=m.created_at,
             edited_at=m.edited_at,
@@ -272,6 +295,18 @@ def list_messages(
     return Page(items=message_views(db, user.id, page), next_cursor=next_cursor)
 
 
+def _shared_fit(db: Session, user: User, conversation_id: uuid.UUID, fit_id: uuid.UUID) -> dict:
+    """The payload for sharing a fit. Everyone in the chat must be allowed to see it, so a
+    Friends or Vault fit can't reach someone it isn't for. Raises FitNotShareableError."""
+    fit = fit_repository.get(db, fit_id)
+    if fit is None or not fit.author.is_active:
+        raise FitNotShareableError
+    for member_id in repo.member_ids(db, conversation_id):
+        if not fit_repository.is_visible(db, fit, member_id):
+            raise FitNotShareableError
+    return {"fit_id": str(fit.id)}
+
+
 def _payload(db: Session, user: User, data: MessageCreate) -> dict | None:
     owned = [i for i in (data.image_id, data.product.image_id if data.product else None) if i]
     if owned:
@@ -338,6 +373,8 @@ def _preview(message: Message) -> str:
         return f"Fit check: {message.body}"
     if message.kind == "product":
         return f"Shared {payload.get('product', {}).get('name', 'a product')}"
+    if message.kind == "fit":
+        return "Shared a fit"
     return message.body or ""
 
 
@@ -360,15 +397,15 @@ def _notify_offline(
 
 
 def send_message(db: Session, user: User, conversation_id: uuid.UUID, data: MessageCreate) -> MessageRead:
-    """Raises ConversationNotFoundError, RateLimitedError, ClientIdConflictError, and ImageNotFoundError
-    (app.services.image)."""
+    """Raises ConversationNotFoundError, RateLimitedError, ClientIdConflictError, FitNotShareableError,
+    and ImageNotFoundError (app.services.image)."""
     member = _membership(db, conversation_id, user)
     message = Message(
         conversation_id=conversation_id,
         sender_id=user.id,
         kind=data.kind,
         body=data.body if data.kind != "fit_check" else data.question,
-        payload=_payload(db, user, data),
+        payload=_shared_fit(db, user, conversation_id, data.fit_id) if data.kind == "fit" else _payload(db, user, data),
         client_id=data.client_id,
     )
     return _post(db, user, member, message)[0]

@@ -485,3 +485,40 @@ def test_typing_stops_after_leaving_a_circle(client: TestClient, circle, jane, b
         while (event := socket.receive_json())["type"] != "message:new":
             seen.append(event["type"])
         assert "typing:stop" not in seen
+
+
+def post_fit(client: TestClient, user: AuthedUser, upload_image, **extra) -> str:
+    body = {"image_ids": [upload_image(user)], "caption": "Gallery night", **extra}
+    response = client.post("/api/v1/fits", headers=user.headers, json=body)
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+def test_share_a_fit_into_a_chat(client: TestClient, direct: str, jane, bob, upload_image) -> None:
+    fit_id = post_fit(client, jane, upload_image)
+    sent = send(client, jane, direct, kind="fit", fit_id=fit_id)
+    assert sent.status_code == 201, sent.text
+
+    [message] = client.get(f"{CONVERSATIONS_URL}/{direct}/messages", headers=bob.headers).json()["items"]
+    card = message["payload"]["fit"]
+    assert message["kind"] == "fit"
+    assert card["id"] == fit_id and card["caption"] == "Gallery night"
+    assert card["author"]["username"] == "jane" and card["image"]["url"]
+    assert inbox(client, bob)[0]["last_message"]["kind"] == "fit"
+
+    # Deleted later: the message stays, the card is gone.
+    assert client.delete(f"/api/v1/fits/{fit_id}", headers=jane.headers).status_code == 204
+    [message] = client.get(f"{CONVERSATIONS_URL}/{direct}/messages", headers=bob.headers).json()["items"]
+    assert message["payload"] == {"fit": None}
+
+
+def test_cant_share_a_fit_someone_in_the_chat_cant_see(client: TestClient, direct: str, jane, bob, upload_image) -> None:
+    # Jane follows Bob, but Bob doesn't follow back: her Friends posts aren't for him.
+    friends_only = post_fit(client, jane, upload_image, privacy_tier="close_friends")
+    response = send(client, jane, direct, kind="fit", fit_id=friends_only)
+    assert response.status_code == 400
+    assert response.json()["detail"] == "This fit can't be shared with everyone in this chat"
+
+    missing = send(client, jane, direct, kind="fit", fit_id="00000000-0000-0000-0000-000000000000")
+    assert missing.status_code == 400
+    assert send(client, jane, direct, kind="fit").status_code == 422  # fit_id is required
