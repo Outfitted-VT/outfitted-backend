@@ -121,7 +121,7 @@ def following_feed(
 @router.get("/{fit_id}", response_model=FitRead, summary="Get a fit", responses=FIT_NOT_FOUND)
 def read_fit(fit_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> FitRead:
     try:
-        fit = get_fit(db, fit_id)
+        fit = get_fit(db, fit_id, current_user)
     except FitNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fit not found") from None
     return FitRead.from_view(describe_fit(db, current_user, fit))
@@ -273,7 +273,7 @@ def unsave(fit_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> None
 )
 def list_comments(fit_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> list[FitCommentRead]:
     try:
-        get_fit(db, fit_id)
+        get_fit(db, fit_id, current_user)
     except FitNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fit not found") from None
     comments = comment_repository.list_comments(db, fit_id)
@@ -351,7 +351,7 @@ def vote(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This fit has no poll") from None
     except vote_service.InvalidPollOptionError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No such poll answer") from None
-    return FitRead.from_view(describe_fit(db, current_user, get_fit(db, fit_id)))
+    return FitRead.from_view(describe_fit(db, current_user, get_fit(db, fit_id, current_user)))
 
 
 @router.delete(
@@ -366,4 +366,4 @@ def unvote(fit_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> FitR
         vote_service.retract_vote(db, current_user, fit_id)
     except FitNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fit not found") from None
-    return FitRead.from_view(describe_fit(db, current_user, get_fit(db, fit_id)))
+    return FitRead.from_view(describe_fit(db, current_user, get_fit(db, fit_id, current_user)))

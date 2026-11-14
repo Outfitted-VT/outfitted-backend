@@ -34,7 +34,9 @@ def _shared_clothing_ids(db: Session, user: User, fit_id: uuid.UUID) -> set[uuid
     fit: Fit | None = fit_repository.get(db, fit_id)
     if fit is None or not fit.author.is_active:
         raise FitTryOnNotAllowedError
-    if fit.user_id != user.id and (fit.privacy_tier == "vault" or not fit.allow_friend_try_on):
+    if not fit_repository.is_visible(db, fit, user.id):
+        raise FitTryOnNotAllowedError
+    if fit.user_id != user.id and not fit.allow_friend_try_on:
         raise FitTryOnNotAllowedError
     ids = {image.id for image in fit.images}
     if fit.tryon is not None:

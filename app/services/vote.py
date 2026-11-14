@@ -27,7 +27,7 @@ class InvalidPollOptionError(Exception):
 def cast_vote(db: Session, user: User, fit_id: uuid.UUID, option: int) -> None:
     """Record or change the user's vote. Raises FitNotFoundError, NoPollError or
     InvalidPollOptionError."""
-    fit = get_fit(db, fit_id)
+    fit = get_fit(db, fit_id, user)
     if not fit.poll_options:
         raise NoPollError
     if option >= len(fit.poll_options):
@@ -48,6 +48,6 @@ def cast_vote(db: Session, user: User, fit_id: uuid.UUID, option: int) -> None:
 
 def retract_vote(db: Session, user: User, fit_id: uuid.UUID) -> None:
     """Remove the user's vote. Raises FitNotFoundError. Idempotent."""
-    get_fit(db, fit_id)
+    get_fit(db, fit_id, user)
     vote_repository.remove_vote(db, user.id, fit_id)
     db.commit()

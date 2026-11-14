@@ -117,5 +117,6 @@ def following_feed(db: Session, viewer: User, *, limit: int, cursor: str | None)
         cursor=decoded,
         user_ids=follow_repository.followee_ids(viewer.id),
         include_user_id=viewer.id,
+        viewer_id=viewer.id,
     )
     return paginate(db, viewer, fits, limit, lambda fit: (fit.created_at, fit.id))

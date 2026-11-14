@@ -9,7 +9,7 @@ from app.core.pagination import Cursor
 from app.models.engagement import FitLike, FitSave
 from app.models.fit import Fit
 from app.models.user import User
-from app.repositories.fit import with_details
+from app.repositories.fit import visible_to, with_details
 
 
 def add_like(db: Session, user_id: uuid.UUID, fit_id: uuid.UUID) -> None:
@@ -76,7 +76,7 @@ def list_saved(
         select(Fit, FitSave)
         .join(FitSave, FitSave.fit_id == Fit.id)
         .join(Fit.author)
-        .where(FitSave.user_id == user_id, User.is_active)
+        .where(FitSave.user_id == user_id, User.is_active, visible_to(user_id))
     )
     if cursor is not None:
         statement = statement.where(
