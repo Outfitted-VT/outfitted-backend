@@ -299,6 +299,39 @@ def test_hidden_direct_chat_returns_with_a_new_message(client: TestClient, direc
     assert [c["id"] for c in inbox(client, jane)] == [direct]
 
 
+def test_empty_direct_chat_is_listed_only_for_whoever_opened_it(client: TestClient, direct: str, jane, bob) -> None:
+    [mine] = inbox(client, jane)
+    assert mine["id"] == direct and mine["last_message"] is None
+    assert inbox(client, bob) == []
+
+    text(client, jane, direct, "hey")
+    assert [c["id"] for c in inbox(client, bob)] == [direct]
+
+
+def test_deleting_a_direct_chat_clears_it_for_you_only(client: TestClient, direct: str, jane, bob) -> None:
+    text(client, bob, direct, "first")
+    text(client, jane, direct, "second")
+    assert client.delete(f"{CONVERSATIONS_URL}/{direct}", headers=jane.headers).status_code == 204
+
+    # Jane: gone, and opening it again shows no history.
+    assert inbox(client, jane) == []
+    assert start(client, jane, [bob]).json()["id"] == direct
+    [reopened] = inbox(client, jane)
+    assert reopened["last_message"] is None and reopened["unread_count"] == 0
+    assert client.get(f"{CONVERSATIONS_URL}/{direct}/messages", headers=jane.headers).json()["items"] == []
+
+    # Bob keeps everything.
+    bobs = client.get(f"{CONVERSATIONS_URL}/{direct}/messages", headers=bob.headers).json()["items"]
+    assert [m["body"] for m in bobs] == ["second", "first"]
+
+    # New messages show for Jane again, without the old ones.
+    text(client, bob, direct, "third")
+    janes = client.get(f"{CONVERSATIONS_URL}/{direct}/messages", headers=jane.headers).json()["items"]
+    assert [m["body"] for m in janes] == ["third"]
+    [listed] = inbox(client, jane)
+    assert listed["last_message"]["body"] == "third" and listed["unread_count"] == 1
+
+
 def test_user_search_scoped_to_circle(client: TestClient, jane, bob, carol) -> None:
     follow(client, bob, jane)
 
@@ -388,6 +421,7 @@ def test_socket_pushes_messages_votes_receipts_and_typing(client: TestClient, di
 
 
 def test_presence_and_last_seen(client: TestClient, direct: str, jane, bob) -> None:
+    text(client, jane, direct, "hi")  # an empty chat isn't in Bob's inbox
     with client.websocket_connect("/api/v1/ws") as socket:
         connect(socket, jane)
         members = {m["user"]["username"]: m for m in inbox(client, bob)[0]["members"]}

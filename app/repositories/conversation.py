@@ -117,6 +117,10 @@ def unread_counts(db: Session, user_id: uuid.UUID, conversation_ids: list[uuid.U
                 ConversationMember.last_read_at.is_(None),
                 Message.created_at > ConversationMember.last_read_at,
             ),
+            or_(
+                ConversationMember.cleared_at.is_(None),
+                Message.created_at > ConversationMember.cleared_at,
+            ),
         )
         .group_by(Message.conversation_id)
     )
@@ -124,10 +128,18 @@ def unread_counts(db: Session, user_id: uuid.UUID, conversation_ids: list[uuid.U
 
 
 def list_messages(
-    db: Session, conversation_id: uuid.UUID, *, limit: int, cursor: Cursor | None
+    db: Session,
+    conversation_id: uuid.UUID,
+    *,
+    limit: int,
+    cursor: Cursor | None,
+    after: datetime | None = None,
 ) -> list[Message]:
-    """Newest first; with a cursor, only messages strictly older than it."""
+    """Newest first; with a cursor, only messages strictly older than it. With `after`, only
+    messages sent after that time (a member who deleted the chat)."""
     statement = select(Message).where(Message.conversation_id == conversation_id)
+    if after is not None:
+        statement = statement.where(Message.created_at > after)
     if cursor is not None:
         statement = statement.where(
             or_(

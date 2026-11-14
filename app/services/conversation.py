@@ -1,7 +1,7 @@
 """Messaging rules: conversations, messages, receipts, fit-check votes, and realtime events."""
 
 import uuid
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -169,9 +169,19 @@ def _conversation_view(
     )
 
 
+def _visible_to(member: ConversationMember, message: Message) -> bool:
+    """False for messages from before the member deleted the chat."""
+    if member.cleared_at is None:
+        return True
+    # SQLite hands back naive datetimes; everything is stored in UTC.
+    utc = lambda value: value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return utc(message.created_at) > utc(member.cleared_at)
+
+
 def _views(db: Session, user: User, members: list[ConversationMember]) -> list[ConversationRead]:
     ids = [m.conversation_id for m in members]
-    lasts = repo.last_messages(db, ids)
+    by_id = {m.conversation_id: m for m in members}
+    lasts = {cid: msg for cid, msg in repo.last_messages(db, ids).items() if _visible_to(by_id[cid], msg)}
     last_views = dict(zip(lasts.keys(), message_views(db, user.id, list(lasts.values()))))
     unread = repo.unread_counts(db, user.id, ids)
     views = [
@@ -182,7 +192,15 @@ def _views(db: Session, user: User, members: list[ConversationMember]) -> list[C
 
 
 def list_conversations(db: Session, user: User) -> list[ConversationRead]:
-    return _views(db, user, repo.memberships(db, user.id))
+    """A direct chat nobody has written in yet is listed only for whoever opened it."""
+    members = repo.memberships(db, user.id)
+    started = repo.last_messages(db, [m.conversation_id for m in members])
+    members = [
+        m
+        for m in members
+        if m.conversation.type != "direct" or m.conversation_id in started or m.conversation.created_by == user.id
+    ]
+    return _views(db, user, members)
 
 
 def get_conversation(db: Session, user: User, conversation_id: uuid.UUID) -> ConversationRead:
@@ -231,8 +249,9 @@ def create_conversation(db: Session, user: User, data: ConversationCreate) -> tu
             return get_conversation(db, user, existing.id), False
         raise
     db.refresh(conversation)
-    hub.publish(others, {"type": "conversation:update", "conversation_id": conversation.id})
     if conversation.type == "circle":
+        # A direct chat reaches the other person with its first message (message:new).
+        hub.publish(others, {"type": "conversation:update", "conversation_id": conversation.id})
         for member_id in others:
             notifications.notify(
                 db, member_id, "circle_added", actor=user, entity_type="conversation", entity_id=conversation.id,
@@ -245,9 +264,9 @@ def list_messages(
     db: Session, user: User, conversation_id: uuid.UUID, *, limit: int, before: str | None
 ) -> Page[MessageRead]:
     """Newest first. Raises ConversationNotFoundError and InvalidCursorError."""
-    _membership(db, conversation_id, user)
+    member = _membership(db, conversation_id, user)
     cursor = decode_cursor(before) if before else None
-    rows = repo.list_messages(db, conversation_id, limit=limit + 1, cursor=cursor)
+    rows = repo.list_messages(db, conversation_id, limit=limit + 1, cursor=cursor, after=member.cleared_at)
     page, more = rows[:limit], len(rows) > limit
     next_cursor = encode_cursor(page[-1].created_at, page[-1].id) if more and page else None
     return Page(items=message_views(db, user.id, page), next_cursor=next_cursor)
@@ -424,11 +443,12 @@ def update_conversation(
 
 
 def leave_or_hide(db: Session, user: User, conversation_id: uuid.UUID) -> None:
-    """Leave a circle, or hide a direct chat until its next message."""
+    """Leave a circle, or delete a direct chat for this user only: it's hidden until its next
+    message, and its earlier messages stay gone for them. The other person keeps everything."""
     member = _membership(db, conversation_id, user)
     conversation = member.conversation
     if conversation.type == "direct":
-        member.hidden_at = utcnow()
+        member.hidden_at = member.cleared_at = utcnow()
         db.commit()
         return
     conversation.members.remove(member)
