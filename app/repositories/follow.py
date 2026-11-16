@@ -9,6 +9,7 @@ from app.core.pagination import Cursor
 from app.models.fit import Fit
 from app.models.follow import Follow
 from app.models.user import User
+from app.repositories.fit import visible_to
 
 
 def add(db: Session, follower_id: uuid.UUID, followee_id: uuid.UUID) -> None:
@@ -51,8 +52,9 @@ def following_count(db: Session, user_id: uuid.UUID) -> int:
     )
 
 
-def fit_count(db: Session, user_id: uuid.UUID) -> int:
-    return _count(db, select(Fit.id).where(Fit.user_id == user_id))
+def fit_count(db: Session, user_id: uuid.UUID, viewer_id: uuid.UUID) -> int:
+    """The user's fits that the viewer can see (Friends and Vault fits only count when they can)."""
+    return _count(db, select(Fit.id).where(Fit.user_id == user_id, visible_to(viewer_id)))
 
 
 def followee_ids(follower_id: uuid.UUID):

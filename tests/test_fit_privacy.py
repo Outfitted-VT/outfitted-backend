@@ -93,3 +93,11 @@ def test_saved_friends_post_disappears_when_no_longer_mutual(client: TestClient,
     assert client.delete(f"{USERS_URL}/leo/follow", headers=people["maya"].headers).status_code == 204
     assert client.get(f"{USERS_URL}/me/saved", headers=leo.headers).json()["items"] == []
     assert client.get(f"{FITS_URL}/{fit_id}", headers=leo.headers).status_code == 404
+
+
+@pytest.mark.parametrize("viewer", sorted(CAN_SEE))
+def test_profile_fit_count_counts_only_visible_fits(client: TestClient, people, posts, viewer: str) -> None:
+    response = client.get(f"{USERS_URL}/maya", headers=people[viewer].headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["fit_count"] == len(CAN_SEE[viewer])

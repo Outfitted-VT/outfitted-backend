@@ -50,7 +50,7 @@ def get_profile(db: Session, viewer: User, username: str) -> ProfileView:
     user = _get_user(db, username)
     return ProfileView(
         user=user,
-        fit_count=follow_repository.fit_count(db, user.id),
+        fit_count=follow_repository.fit_count(db, user.id, viewer.id),
         follower_count=follow_repository.follower_count(db, user.id),
         following_count=follow_repository.following_count(db, user.id),
         is_following=follow_repository.exists(db, viewer.id, user.id),
