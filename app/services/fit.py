@@ -41,6 +41,25 @@ class InvalidItemPinError(Exception):
     pass
 
 
+class InvalidItemImageError(Exception):
+    """An item's photo isn't one of the fit's photos or its try-on's clothing photos."""
+
+
+def _piece_image_ids(image_ids, tryon: TryOn | None) -> set:
+    """Photos a fit's items may use as their own photo."""
+    allowed = set(image_ids)
+    if tryon is not None:
+        if tryon.outfit_image_id:
+            allowed.add(tryon.outfit_image_id)
+        allowed.update(piece.image_id for piece in tryon.pieces if piece.image_id)
+    return allowed
+
+
+def _check_item_images(items: list[FitItemIn], allowed: set) -> None:
+    if any(item.image_id is not None and item.image_id not in allowed for item in items):
+        raise InvalidItemImageError
+
+
 class PollLockedError(Exception):
     """The poll can't change once anyone has voted on it."""
 
@@ -59,6 +78,8 @@ class FitView:
     tried_count: int = 0
     # Only for the fit's author; None for everyone else.
     save_count: int | None = None
+    # The viewer's saved pieces from this fit: {(category, lowercase name): saved piece id}.
+    saved_pieces: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -82,6 +103,7 @@ def describe_fits(db: Session, viewer: User, fits: list[Fit]) -> list[FitView]:
     tried = engagement_repository.tried_counts(db, fit_ids)
     own = [fit.id for fit in fits if fit.user_id == viewer.id]
     saves = engagement_repository.save_counts(db, own) if own else {}
+    pieces = engagement_repository.saved_piece_ids(db, viewer.id, fit_ids)
     return [
         FitView(
             fit=fit,
@@ -93,6 +115,7 @@ def describe_fits(db: Session, viewer: User, fits: list[Fit]) -> list[FitView]:
             my_vote=my_votes.get(fit.id),
             tried_count=tried.get(fit.id, 0),
             save_count=saves.get(fit.id, 0) if fit.user_id == viewer.id else None,
+            saved_pieces=pieces.get(fit.id, {}),
         )
         for fit in fits
     ]
@@ -127,6 +150,7 @@ def _build_items(items: list[FitItemIn]) -> list[FitItem]:
             pin_image_id=item.pin.image_id if item.pin else None,
             pin_x=item.pin.x if item.pin else None,
             pin_y=item.pin.y if item.pin else None,
+            image_id=item.image_id,
             source=item.source,
         )
         for position, item in enumerate(items)
@@ -161,10 +185,12 @@ def create_fit(db: Session, author: User, data: FitCreate) -> Fit:
     images = get_owned_images(db, author, data.image_ids)
     if fit_repository.used_image_ids(db, data.image_ids):
         raise ImageAlreadyUsedError
+    tryon = None
     if data.tryon_id is not None:
         tryon = db.get(TryOn, data.tryon_id)
         if tryon is None or tryon.user_id != author.id:
             raise TryOnNotFoundError
+    _check_item_images(data.items, _piece_image_ids(data.image_ids, tryon))
 
     fit = Fit(
         user_id=author.id,
@@ -210,6 +236,7 @@ def update_fit(db: Session, editor: User, fit_id: uuid.UUID, changes: FitUpdate)
         image_ids = {image.id for image in fit.images}
         if any(item.pin and item.pin.image_id not in image_ids for item in changes.items):
             raise InvalidItemPinError
+        _check_item_images(changes.items, _piece_image_ids(image_ids, fit.tryon))
         fit.items = _build_items(changes.items)
     if fields & {"occasion_tags", "style_tags"}:
         occasion = changes.occasion_tags if "occasion_tags" in fields else fit.occasion_tags

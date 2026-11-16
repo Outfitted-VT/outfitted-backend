@@ -6,12 +6,13 @@ from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, PageCursor, PageLimit, SessionDep
 from app.core.pagination import InvalidCursorError
 from app.schemas.error import ErrorResponse
-from app.schemas.fit import FitRead
+from app.schemas.fit import FitRead, SavedPieceRead
 from app.schemas.pagination import Page
 from app.schemas.notification import NotificationSettingsRead, NotificationSettingsUpdate
 from app.schemas.story import StoryGroup
 from app.schemas.streak import StreakRead
 from app.schemas.user import ProfileRead, UserPrivacySettingsRead, UserPrivacySettingsUpdate, UserRead, UserSearchResult, UserSuggestion, UserSummary, UserUpdate
+from app.services import engagement as engagement_service
 from app.services.engagement import list_saved_fits
 from app.services import follow as follow_service
 from app.services import notification as notification_service
@@ -168,6 +169,36 @@ def read_saved_fits(
     except InvalidCursorError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from None
     return Page(items=[FitRead.from_view(view) for view in page.views], next_cursor=page.next_cursor)
+
+
+@router.get(
+    "/me/saved-pieces",
+    response_model=Page[SavedPieceRead],
+    summary="List your saved pieces",
+    responses={**UNAUTHORIZED_RESPONSE, **INVALID_CURSOR_RESPONSE},
+)
+def read_saved_pieces(
+    current_user: CurrentUser, db: SessionDep, limit: PageLimit = 20, cursor: PageCursor = None
+) -> Page[SavedPieceRead]:
+    """Single pieces you saved from fits, most recently saved first. Only you can see them."""
+    try:
+        page = engagement_service.list_saved_pieces(db, current_user, limit=limit, cursor=cursor)
+    except InvalidCursorError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from None
+    return Page(items=[SavedPieceRead.from_model(p) for p in page.pieces], next_cursor=page.next_cursor)
+
+
+@router.delete(
+    "/me/saved-pieces/{piece_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Unsave a piece",
+    responses={**UNAUTHORIZED_RESPONSE, status.HTTP_404_NOT_FOUND: {"model": ErrorResponse, "description": "Saved piece not found."}},
+)
+def delete_saved_piece(piece_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> None:
+    try:
+        engagement_service.unsave_piece(db, current_user, piece_id)
+    except engagement_service.SavedPieceNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved piece not found") from None
 
 
 @router.get(

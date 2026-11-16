@@ -90,6 +90,8 @@ def test_detection_suggests_items_and_tags(
         "url": None,
         # The center of the box [ymin=200, xmin=300, ymax=600, xmax=700] out of 1000.
         "pin": {"image_id": image_id, "x": 0.5, "y": 0.4},
+        # A piece's own photo is set when posting (e.g. a try-on's clothing photo), never here.
+        "image_id": None,
         "source": "detected",
     }
     assert shorts["pin"] is None

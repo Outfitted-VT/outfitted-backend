@@ -108,6 +108,11 @@ class FitItem(Base):
     )
     pin_x: Mapped[float | None] = mapped_column(Float)
     pin_y: Mapped[float | None] = mapped_column(Float)
+    # A photo of just this piece: for a try-on post, the clothing photo it was tried on from.
+    # The app shows it in the shop / save bubble and keeps it on saved pieces.
+    image_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("images.id", ondelete="SET NULL"))
+
+    image: Mapped[Image | None] = relationship(foreign_keys=[image_id], lazy="joined")
 
 
 class FitTag(Base):
