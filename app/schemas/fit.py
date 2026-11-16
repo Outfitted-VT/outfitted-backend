@@ -242,6 +242,8 @@ class FitRead(BaseModel):
     comment_count: int = 0
     liked_by_me: bool
     saved_by_me: bool
+    tried_count: int = Field(default=0, description="How many people tried this look on with \"Try this look\" (not counting the author).")
+    save_count: int | None = Field(default=None, description="How many people saved it. Only on your own fits; `null` otherwise.")
     poll: PollRead | None = None
     privacy_tier: str = "public"
     allow_friend_try_on: bool = True
@@ -263,6 +265,8 @@ class FitRead(BaseModel):
             comment_count=getattr(view, "comment_count", 0),
             liked_by_me=view.liked_by_me,
             saved_by_me=view.saved_by_me,
+            tried_count=getattr(view, "tried_count", 0),
+            save_count=getattr(view, "save_count", None),
             poll=PollRead.of(fit, getattr(view, "vote_counts", {}), getattr(view, "my_vote", None)),
             privacy_tier=getattr(fit, "privacy_tier", "public"),
             allow_friend_try_on=getattr(fit, "allow_friend_try_on", True),

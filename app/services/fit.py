@@ -56,6 +56,9 @@ class FitView:
     comment_count: int = 0
     vote_counts: dict[int, int] = field(default_factory=dict)
     my_vote: int | None = None
+    tried_count: int = 0
+    # Only for the fit's author; None for everyone else.
+    save_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -65,8 +68,8 @@ class FitPage:
 
 
 def describe_fits(db: Session, viewer: User, fits: list[Fit]) -> list[FitView]:
-    """Attach like, comment and vote counts, and the viewer's likes/saves/vote,
-    in six queries for the whole list."""
+    """Attach like, comment, vote and "tried it" counts, the viewer's likes/saves/vote, and
+    (on the viewer's own fits) how many saved them, in a fixed number of queries."""
     fit_ids = [fit.id for fit in fits]
     if not fit_ids:
         return []
@@ -76,6 +79,9 @@ def describe_fits(db: Session, viewer: User, fits: list[Fit]) -> list[FitView]:
     saved = engagement_repository.saved_fit_ids(db, viewer.id, fit_ids)
     votes = vote_repository.vote_counts(db, fit_ids)
     my_votes = vote_repository.votes_by_user(db, viewer.id, fit_ids)
+    tried = engagement_repository.tried_counts(db, fit_ids)
+    own = [fit.id for fit in fits if fit.user_id == viewer.id]
+    saves = engagement_repository.save_counts(db, own) if own else {}
     return [
         FitView(
             fit=fit,
@@ -85,6 +91,8 @@ def describe_fits(db: Session, viewer: User, fits: list[Fit]) -> list[FitView]:
             saved_by_me=fit.id in saved,
             vote_counts=votes.get(fit.id, {}),
             my_vote=my_votes.get(fit.id),
+            tried_count=tried.get(fit.id, 0),
+            save_count=saves.get(fit.id, 0) if fit.user_id == viewer.id else None,
         )
         for fit in fits
     ]

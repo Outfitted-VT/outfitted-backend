@@ -117,6 +117,7 @@ def create_tryon(
         person_image_id=person.id,
         outfit_image_id=outfit_image_id,
         result_image_id=result_image.id,
+        source_fit_id=data.fit_id,
         model=settings.TRYON_MODEL,
         pieces=tryon_pieces,
     )

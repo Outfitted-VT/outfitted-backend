@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.pagination import Cursor
 from app.models.engagement import FitLike, FitSave
 from app.models.fit import Fit
+from app.models.tryon import TryOn
 from app.models.user import User
 from app.repositories.fit import visible_to, with_details
 
@@ -45,6 +46,27 @@ def like_counts(db: Session, fit_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         select(FitLike.fit_id, func.count())
         .where(FitLike.fit_id.in_(fit_ids))
         .group_by(FitLike.fit_id)
+    )
+    return {fit_id: count for fit_id, count in rows}
+
+
+def save_counts(db: Session, fit_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+    rows = db.execute(
+        select(FitSave.fit_id, func.count())
+        .where(FitSave.fit_id.in_(fit_ids))
+        .group_by(FitSave.fit_id)
+    )
+    return {fit_id: count for fit_id, count in rows}
+
+
+def tried_counts(db: Session, fit_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+    """How many people tried each fit on with "Try this look": distinct users, not counting
+    the fit's author."""
+    rows = db.execute(
+        select(TryOn.source_fit_id, func.count(func.distinct(TryOn.user_id)))
+        .join(Fit, Fit.id == TryOn.source_fit_id)
+        .where(TryOn.source_fit_id.in_(fit_ids), TryOn.user_id != Fit.user_id)
+        .group_by(TryOn.source_fit_id)
     )
     return {fit_id: count for fit_id, count in rows}
 

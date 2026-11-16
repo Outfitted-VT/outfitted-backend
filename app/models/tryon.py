@@ -29,6 +29,10 @@ class TryOn(TimestampMixin, Base):
     result_image_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("images.id", ondelete="SET NULL")
     )
+    # "Try this look": the fit it was copied from, so a fit can show how many people tried it.
+    source_fit_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("fits.id", ondelete="SET NULL"), index=True
+    )
     # Which model generated it, e.g. "gemini-3.1-flash-image".
     model: Mapped[str] = mapped_column(String(100))
 
