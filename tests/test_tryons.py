@@ -853,3 +853,41 @@ def test_try_this_look_respects_the_posters_settings(
     assert response.json() == {"detail": "Try-ons are turned off for this fit"}
     if not fields.get("allow_friend_try_on", True):
         assert fit["try_on_source"] is None
+
+
+# --- "tried it" and save counts ------------------------------------------------------------
+
+
+def test_fit_counts_people_who_tried_it_and_saves_for_the_author(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    poster, bob, carol = create_user("jane"), create_user("bob"), create_user("carol")
+    photo = upload_image(poster)
+    fit = client.post(FITS_URL, headers=poster.headers, json={"image_ids": [photo]}).json()
+    assert fit["tried_count"] == 0
+
+    def try_it(user: AuthedUser) -> None:
+        response = client.post(
+            TRYONS_URL,
+            headers=user.headers,
+            json={"person_image_id": upload_image(user), "outfit_image_id": photo, "fit_id": fit["id"]},
+        )
+        assert response.status_code == 201, response.text
+
+    try_it(bob)
+    try_it(bob)  # the same person twice counts once
+    try_it(carol)
+    try_it(poster)  # the author trying their own look doesn't count
+    client.put(f"{FITS_URL}/{fit['id']}/save", headers=bob.headers)
+
+    as_bob = client.get(f"{FITS_URL}/{fit['id']}", headers=bob.headers).json()
+    as_poster = client.get(f"{FITS_URL}/{fit['id']}", headers=poster.headers).json()
+
+    assert as_bob["tried_count"] == 2
+    assert as_poster["tried_count"] == 2
+    # Saves: only the author sees how many.
+    assert as_bob["save_count"] is None
+    assert as_poster["save_count"] == 1

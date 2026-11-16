@@ -38,7 +38,8 @@ class Fit(TimestampMixin, Base):
     poll_options: Mapped[list[str] | None] = mapped_column(JSON)
 
     author: Mapped[User] = relationship()
-    tryon: Mapped[TryOn | None] = relationship()
+    # tryons.source_fit_id also links the two tables, so say which column this one uses.
+    tryon: Mapped[TryOn | None] = relationship(foreign_keys=[tryon_id])
     fit_images: Mapped[list["FitImage"]] = relationship(
         order_by="FitImage.position", cascade="all, delete-orphan"
     )
