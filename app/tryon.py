@@ -20,6 +20,19 @@ logger = logging.getLogger(__name__)
 # Inputs are sent as JPEG (see app.core.images.to_jpeg).
 INPUT_MIME_TYPE = "image/jpeg"
 
+# Clothes the person already wears that clash with a new item (a suit jacket, collar or tie
+# under a sweater, a long coat under a cropped jacket) come out stitched into it. Tell the model
+# to take them off cleanly instead. Used by both prompts below.
+CLASHING_CLOTHES = (
+    "If something the person is already wearing would get in the way of a new item (for "
+    "example, a suit jacket, shirt collar, or tie under a sweater, a hood under a jacket, or a "
+    "long coat under a cropped one), remove it completely and cleanly before putting the new "
+    "item on. Never merge, stitch, or blend old and new clothes together: no leftover collars, "
+    "lapels, cuffs, seams, hems, buttons, or fabric from the old clothing may show through, "
+    "around, or on top of the new item. The new item should look like it was put on over "
+    "only what would naturally be worn under it. "
+)
+
 GEMINI_PROMPT = (
     "The first image is a photo of a person. The second image shows one or more clothing "
     "items, either on their own or worn by someone else. Edit the first photo so the person "
@@ -31,7 +44,9 @@ GEMINI_PROMPT = (
     "fit that pose. "
     "Replace only the clothes those items take the place of (for example, a top replaces the "
     "person's current top) and keep every other piece of clothing the person is wearing "
-    "unchanged. Each item appears once: do not layer a copy of it, and do not add any clothing "
+    "unchanged, except clothes that clash with a new item (as described next). "
+    + CLASHING_CLOTHES
+    + "Each item appears once: do not layer a copy of it, and do not add any clothing "
     "that isn't in one of the two images. Reproduce each item's color, pattern, material, and "
     "details faithfully, worn naturally and fitted to the person's body, and styled the way "
     "the second image shows it (for example, a buttoned shirt stays buttoned). "
@@ -60,9 +75,12 @@ PIECES_PROMPT_INSTRUCTIONS = (
     "Edit the first photo so the person is wearing all of these items together as one "
     "outfit. Each item replaces only what the person is currently wearing in that place "
     "(for example, a top replaces their current top, footwear replaces their shoes), and "
-    "everything else the person is wearing stays unchanged. Outerwear goes over the top. "
-    "From each item's image, use only the labeled item: ignore any other clothing, people "
-    "(including how they stand or pose), or background in it.Each item appears once: do not layer a copy of it, and do not add "
+    "everything else the person is wearing stays unchanged, except clothes that clash with a "
+    "new item (as described next). Outerwear goes over the top. "
+    + CLASHING_CLOTHES
+    + "From each item's image, use only the labeled item: ignore any other clothing, people "
+    "(including how they stand or pose), or background in it. Each item appears once: do "
+    "not layer a copy of it, and do not add "
     "any clothing that isn't one of the labeled items or already on the person. Reproduce "
     "each item's color, pattern, material, and details faithfully, worn naturally and fitted "
     "to the person's body. "

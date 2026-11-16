@@ -17,7 +17,9 @@ from app.models.image import Image as ImageModel
 from app.models.tryon import TryOn
 from app.schemas.tryon import PieceSlot
 from app.tryon import (
+    CLASHING_CLOTHES,
     GEMINI_PROMPT,
+    PIECES_PROMPT_INSTRUCTIONS,
     SLOT_DESCRIPTIONS,
     Garment,
     GeminiImageGenerator,
@@ -633,6 +635,12 @@ def test_gemini_pieces_are_labeled_in_order() -> None:
         "<sneakers>",
     ]
     assert "wearing all of these items together" in contents[-1]
+
+
+def test_both_prompts_say_to_remove_clashing_clothes() -> None:
+    # A suit jacket under a sweater used to come out stitched into it.
+    assert CLASHING_CLOTHES in GEMINI_PROMPT
+    assert CLASHING_CLOTHES in PIECES_PROMPT_INSTRUCTIONS
 
 
 def test_every_slot_has_a_description() -> None:
