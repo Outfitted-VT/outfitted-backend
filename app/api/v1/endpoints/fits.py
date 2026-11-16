@@ -7,7 +7,7 @@ from app.core.pagination import InvalidCursorError
 from app.repositories import comment as comment_repository
 from app.schemas.comment import FitCommentCreate, FitCommentRead
 from app.schemas.error import ErrorResponse
-from app.schemas.fit import FitCreate, FitPrivacyUpdate, FitRead, FitUpdate
+from app.schemas.fit import FitCreate, FitPrivacyUpdate, FitRead, FitUpdate, SavedPieceRead
 from app.schemas.pagination import Page
 from app.schemas.vote import FitVoteIn
 from app.services import comment as comment_service
@@ -17,6 +17,7 @@ from app.services import vote as vote_service
 from app.services.fit import (
     FitNotFoundError,
     ImageAlreadyUsedError,
+    InvalidItemImageError,
     InvalidItemPinError,
     NotFitOwnerError,
     PollLockedError,
@@ -42,6 +43,7 @@ def _error(status_code: int, detail: str, description: str | None = None) -> dic
 
 
 FIT_NOT_FOUND = _error(status.HTTP_404_NOT_FOUND, "Fit not found")
+ITEM_IMAGE_ERROR = "Each item image must be one of the fit's photos or a clothing photo from its try-on"
 NOT_OWNER = _error(status.HTTP_403_FORBIDDEN, "You can only change your own fits")
 
 
@@ -81,6 +83,8 @@ def post_fit(data: FitCreate, current_user: CurrentUser, db: SessionDep) -> FitR
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image not found") from None
     except TryOnNotFoundError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Try-on not found") from None
+    except InvalidItemImageError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ITEM_IMAGE_ERROR) from None
     except ImageAlreadyUsedError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Image is already used in another fit"
@@ -161,6 +165,8 @@ def edit_fit(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Each item pin must reference one of the fit's images",
         ) from None
+    except InvalidItemImageError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ITEM_IMAGE_ERROR) from None
     except PollLockedError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -250,6 +256,25 @@ def unlike(fit_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> None
 def save(fit_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> None:
     """Bookmark a fit. Saves are private. Idempotent."""
     _engagement_route(engagement_service.save_fit, fit_id, current_user, db)
+
+
+@router.post(
+    "/{fit_id}/items/{item_id}/save",
+    response_model=SavedPieceRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Save one piece of a fit",
+    responses={status.HTTP_404_NOT_FOUND: {"model": ErrorResponse, "description": "Fit or piece not found."}},
+)
+def save_piece(fit_id: uuid.UUID, item_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> SavedPieceRead:
+    """Save a single piece (a shoe, a sweater) instead of the whole fit. Private. Saving the same
+    piece again returns your existing save. Unsave with DELETE /users/me/saved-pieces/{id}."""
+    try:
+        piece = engagement_service.save_piece(db, current_user, fit_id, item_id)
+    except FitNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fit not found") from None
+    except engagement_service.FitItemNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found") from None
+    return SavedPieceRead.from_model(piece)
 
 
 @router.delete(

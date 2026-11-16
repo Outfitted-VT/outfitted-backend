@@ -6,7 +6,7 @@ from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.pagination import Cursor
-from app.models.engagement import FitLike, FitSave
+from app.models.engagement import FitLike, FitSave, SavedPiece
 from app.models.fit import Fit
 from app.models.tryon import TryOn
 from app.models.user import User
@@ -109,3 +109,70 @@ def list_saved(
         )
     statement = statement.order_by(FitSave.created_at.desc(), FitSave.fit_id.desc()).limit(limit)
     return [tuple(row) for row in db.execute(with_details(statement))]
+
+
+# --- Saved pieces ---------------------------------------------------------------------------
+
+
+def piece_key(category: str, name: str) -> tuple[str, str]:
+    """How a saved piece matches a fit's item: same category and name (case-insensitive)."""
+    return category, name.strip().lower()
+
+
+def find_saved_piece(
+    db: Session, user_id: uuid.UUID, fit_id: uuid.UUID, category: str, name: str
+) -> SavedPiece | None:
+    for piece in db.scalars(
+        select(SavedPiece).where(
+            SavedPiece.user_id == user_id, SavedPiece.fit_id == fit_id, SavedPiece.category == category
+        )
+    ):
+        if piece_key(piece.category, piece.name) == piece_key(category, name):
+            return piece
+    return None
+
+
+def add_saved_piece(db: Session, piece: SavedPiece) -> SavedPiece:
+    db.add(piece)
+    db.flush()
+    return piece
+
+
+def get_saved_piece(db: Session, user_id: uuid.UUID, piece_id: uuid.UUID) -> SavedPiece | None:
+    piece = db.get(SavedPiece, piece_id)
+    return piece if piece is not None and piece.user_id == user_id else None
+
+
+def delete_saved_piece(db: Session, piece: SavedPiece) -> None:
+    db.delete(piece)
+
+
+def saved_piece_ids(
+    db: Session, user_id: uuid.UUID, fit_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, dict[tuple[str, str], uuid.UUID]]:
+    """For each fit, the viewer's saved pieces from it: {fit_id: {(category, name): piece_id}}."""
+    result: dict[uuid.UUID, dict[tuple[str, str], uuid.UUID]] = {}
+    rows = db.execute(
+        select(SavedPiece.fit_id, SavedPiece.category, SavedPiece.name, SavedPiece.id).where(
+            SavedPiece.user_id == user_id, SavedPiece.fit_id.in_(fit_ids)
+        )
+    )
+    for fit_id, category, name, piece_id in rows:
+        result.setdefault(fit_id, {})[piece_key(category, name)] = piece_id
+    return result
+
+
+def list_saved_pieces(
+    db: Session, *, user_id: uuid.UUID, limit: int, cursor: Cursor | None
+) -> list[SavedPiece]:
+    """A user's saved pieces, most recently saved first. The cursor is (created_at, id)."""
+    statement = select(SavedPiece).where(SavedPiece.user_id == user_id)
+    if cursor is not None:
+        statement = statement.where(
+            or_(
+                SavedPiece.created_at < cursor.created_at,
+                and_(SavedPiece.created_at == cursor.created_at, SavedPiece.id < cursor.id),
+            )
+        )
+    statement = statement.order_by(SavedPiece.created_at.desc(), SavedPiece.id.desc()).limit(limit)
+    return list(db.scalars(statement))

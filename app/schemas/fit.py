@@ -61,6 +61,11 @@ class FitItemIn(BaseModel):
     silhouette: ShortText = Field(default=None, description='How it fits, e.g. "oversized".')
     url: HttpUrl | None = Field(default=None, description="Where to buy it.")
     pin: ItemPin | None = None
+    image_id: uuid.UUID | None = Field(
+        default=None,
+        description="A photo of just this piece: one of the fit's photos, or a clothing photo from "
+        "the try-on it's posted from (`tryon_id`).",
+    )
     source: ItemSource = Field(
         default="user",
         description='"detected" for items from `POST /detections` (keep it when the user edits '
@@ -79,10 +84,14 @@ class FitItemRead(BaseModel):
     silhouette: str | None
     url: str | None
     pin: ItemPin | None
+    image: ImageRead | None = Field(default=None, description="A photo of just this piece, if it has one.")
     source: ItemSource
+    saved_piece_id: uuid.UUID | None = Field(
+        default=None, description="Your saved copy of this piece, if you saved it (POST .../items/{id}/save)."
+    )
 
     @classmethod
-    def from_model(cls, item) -> "FitItemRead":
+    def from_model(cls, item, saved_piece_id: uuid.UUID | None = None) -> "FitItemRead":
         pin = None
         if item.pin_image_id is not None:
             pin = ItemPin(image_id=item.pin_image_id, x=item.pin_x, y=item.pin_y)
@@ -97,7 +106,9 @@ class FitItemRead(BaseModel):
             silhouette=item.silhouette,
             url=item.url,
             pin=pin,
+            image=ImageRead.model_validate(item.image) if getattr(item, "image", None) else None,
             source=item.source,
+            saved_piece_id=saved_piece_id,
         )
 
 
@@ -253,12 +264,16 @@ class FitRead(BaseModel):
     @classmethod
     def from_view(cls, view) -> "FitRead":
         fit = view.fit
+        saved = getattr(view, "saved_pieces", {}) or {}
         return cls(
             id=fit.id,
             author=UserSummary.model_validate(fit.author),
             caption=fit.caption,
             images=[ImageRead.model_validate(image) for image in fit.images],
-            items=[FitItemRead.from_model(item) for item in fit.items],
+            items=[
+                FitItemRead.from_model(item, saved.get((item.category, item.name.strip().lower())))
+                for item in fit.items
+            ],
             occasion_tags=fit.occasion_tags,
             style_tags=fit.style_tags,
             like_count=view.like_count,
@@ -279,3 +294,46 @@ class FitRead(BaseModel):
 class FitPrivacyUpdate(BaseModel):
     privacy_tier: Literal["public", "close_friends", "vault"] | None = None
     allow_friend_try_on: bool | None = None
+
+
+class SavedPiecePhoto(BaseModel):
+    """Where to centre the piece on its photo, as fractions of width/height."""
+
+    x: float
+    y: float
+
+
+class SavedPieceRead(BaseModel):
+    """A piece you saved from a fit. `photo` is the fit's photo it was on; with `zoom`, show it
+    enlarged and centred on `pin` (several pieces share that photo)."""
+
+    id: uuid.UUID
+    fit_id: uuid.UUID | None = Field(description="The fit it came from; `null` once that fit is deleted.")
+    source_username: str | None
+    category: str
+    name: str
+    brand: str | None
+    color: str | None
+    url: str | None
+    photo: ImageRead | None
+    pin: SavedPiecePhoto | None
+    zoom: bool
+    created_at: UtcDatetime
+
+    @classmethod
+    def from_model(cls, piece) -> "SavedPieceRead":
+        pin = SavedPiecePhoto(x=piece.pin_x, y=piece.pin_y) if piece.pin_x is not None else None
+        return cls(
+            id=piece.id,
+            fit_id=piece.fit_id,
+            source_username=piece.source_username,
+            category=piece.category,
+            name=piece.name,
+            brand=piece.brand,
+            color=piece.color,
+            url=piece.url,
+            photo=ImageRead.model_validate(piece.image) if piece.image else None,
+            pin=pin,
+            zoom=piece.zoom,
+            created_at=piece.created_at,
+        )
