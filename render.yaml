@@ -1,0 +1,47 @@
+# Render Blueprint for the API (https://render.com/docs/blueprint-spec). In Render: New >
+# Blueprint, pick this repository, then fill in the values marked sync: false. See README.md,
+# "Deploy on Render".
+services:
+  - type: web
+    name: outfitted-api
+    runtime: python
+    plan: free
+    region: virginia # next to the Neon database (AWS us-east-1)
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    # The free plan has no pre-deploy step, so migrations run on every start (a no-op when
+    # the database is already up to date).
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: ENVIRONMENT
+        value: production
+      - key: SECRET_KEY
+        generateValue: true
+      # Neon's pooled connection string (the host with -pooler).
+      - key: DATABASE_URL
+        sync: false
+      # Photos in Cloudflare R2.
+      - key: STORAGE_BACKEND
+        value: s3
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: MEDIA_BASE_URL
+        sync: false
+      # Try-on and piece detection: a service account key, uploaded as a Secret File named
+      # google-service-account.json (Render puts Secret Files in /etc/secrets).
+      - key: GOOGLE_CLOUD_PROJECT
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/google-service-account.json
+      # Removes expired stories every so often; one instance, so it runs once.
+      - key: RUN_SCHEDULER
+        value: "true"
