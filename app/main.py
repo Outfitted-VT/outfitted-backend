@@ -98,9 +98,10 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
-    # Serve uploaded files from local storage. With S3/R2, MEDIA_BASE_URL points at the
-    # bucket or CDN instead and this mount goes unused.
-    app.mount("/media", StaticFiles(directory=settings.MEDIA_ROOT, check_dir=False), name="media")
+    # Serve uploaded files from local storage. With S3/R2, clients load them from the bucket
+    # (MEDIA_BASE_URL) instead.
+    if settings.STORAGE_BACKEND == "local":
+        app.mount("/media", StaticFiles(directory=settings.MEDIA_ROOT, check_dir=False), name="media")
 
     @app.get("/", tags=["root"])
     def root() -> dict[str, str]:
