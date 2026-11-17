@@ -43,6 +43,15 @@ auth; `APNS_USE_SANDBOX=true` for builds run from Xcode, `false` for TestFlight 
 
 Every try-on and detection is a paid request (detections are cached per image). Tests use fakes and never call Google.
 
+## Photo storage
+
+Locally, uploaded photos are saved under `MEDIA_ROOT` and served by the API at `/media`. Most hosts wipe the disk on every deploy, so hosted, set `STORAGE_BACKEND=s3` to keep them in an S3-compatible bucket such as Cloudflare R2:
+
+1. Create an R2 bucket and turn on public access (its `r2.dev` URL, or your own domain).
+2. Create an R2 API token with **Object Read & Write** for that bucket.
+3. Set `S3_ENDPOINT_URL` (`https://<account id>.r2.cloudflarestorage.com`), `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and `MEDIA_BASE_URL` to the bucket's public URL. See `.env.example`.
+
+Requests are signed with AWS Signature V4 using httpx, so no AWS SDK is needed. Photos already on disk aren't copied over.
 
 ## Database migrations
 
@@ -77,7 +86,7 @@ app/
 │   ├── security.py      # Password hashing, JWT and refresh tokens
 │   ├── images.py        # Upload validation and re-encoding (strips EXIF)
 │   └── pagination.py    # Opaque cursors for newest-first lists
-├── storage.py           # File storage interface (local disk now, S3/R2 later)
+├── storage.py           # File storage: local disk, or an S3-compatible bucket (R2)
 ├── tryon.py             # Try-on image generation interface (Google models)
 ├── garments.py          # Clothing piece detection interface (Gemini)
 ├── db/                  # SQLAlchemy Base, engine/session, shared mixins

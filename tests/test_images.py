@@ -130,7 +130,8 @@ def test_media_served_as_webp(
     monkeypatch.setattr(media_mount.app, "directory", str(storage.root))
     monkeypatch.setattr(media_mount.app, "all_directories", [str(storage.root)])
 
-    response = client.get(url.removeprefix("http://localhost:8000"))
+    # The URL starts with MEDIA_BASE_URL, whatever .env sets it to; the mount serves /media.
+    response = client.get("/media" + url.removeprefix(settings.MEDIA_BASE_URL.rstrip("/")))
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/webp"

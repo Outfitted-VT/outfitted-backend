@@ -21,9 +21,18 @@ class Settings(BaseSettings):
     ]
     DATABASE_URL: str = "sqlite:///./outfitted.db"
 
-    # Uploaded files. MEDIA_BASE_URL is where clients load them from (a CDN/bucket URL later).
+    # Uploaded files. "local": saved under MEDIA_ROOT and served by this API at /media. "s3":
+    # saved to an S3-compatible bucket (Cloudflare R2, AWS S3); MEDIA_BASE_URL is then the
+    # bucket's public URL. MEDIA_BASE_URL is where clients load files from either way.
+    STORAGE_BACKEND: Literal["local", "s3"] = "local"
     MEDIA_ROOT: str = "media"
     MEDIA_BASE_URL: str = "http://localhost:8000/media"
+    # For STORAGE_BACKEND=s3. R2: https://<account id>.r2.cloudflarestorage.com, region "auto".
+    S3_ENDPOINT_URL: str | None = None
+    S3_BUCKET: str | None = None
+    S3_ACCESS_KEY_ID: str | None = None
+    S3_SECRET_ACCESS_KEY: str | None = None
+    S3_REGION: str = "auto"
     MAX_UPLOAD_BYTES: int = 10 * 1024 * 1024
 
     MESSAGE_MAX_LENGTH: int = 2000
@@ -95,6 +104,18 @@ class Settings(BaseSettings):
             self.SECRET_KEY == INSECURE_DEV_SECRET_KEY or len(self.SECRET_KEY) < 32
         ):
             raise ValueError("SECRET_KEY must be set to at least 32 characters outside development")
+        return self
+
+    @model_validator(mode="after")
+    def s3_storage_needs_a_bucket(self) -> Self:
+        if self.STORAGE_BACKEND == "s3":
+            missing = [
+                name
+                for name in ("S3_ENDPOINT_URL", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY")
+                if not getattr(self, name)
+            ]
+            if missing:
+                raise ValueError(f"STORAGE_BACKEND=s3 needs {', '.join(missing)}")
         return self
 
     @model_validator(mode="after")
