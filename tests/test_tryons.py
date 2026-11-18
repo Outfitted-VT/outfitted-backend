@@ -19,6 +19,7 @@ from app.schemas.tryon import PieceSlot
 from app.tryon import (
     CLASHING_CLOTHES,
     GEMINI_PROMPT,
+    KEEP_THE_CUT,
     PIECES_PROMPT_INSTRUCTIONS,
     SLOT_DESCRIPTIONS,
     Garment,
@@ -682,6 +683,7 @@ def test_posted_tryon_shares_its_clothes_but_not_the_person(
     assert fit["try_on_source"] == {
         "mode": "outfit",
         "outfit_image": tryon["outfit_image"],
+        "outfit_note": None,
         "pieces": [],
     }
     assert person not in str(fit)
@@ -891,3 +893,112 @@ def test_fit_counts_people_who_tried_it_and_saves_for_the_author(
     # Saves: only the author sees how many.
     assert as_bob["save_count"] is None
     assert as_poster["save_count"] == 1
+
+
+# --- notes: the user's description of each piece ("relaxed oversized tee") ---------------
+
+
+def test_piece_notes_reach_the_model_and_are_kept(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    user = create_user()
+    top, feet = upload_image(user), upload_image(user)
+
+    response = client.post(
+        TRYONS_URL,
+        headers=user.headers,
+        json={
+            "person_image_id": upload_image(user),
+            "pieces": [
+                {"slot": "top", "image_id": top, "note": "  relaxed\n oversized tee "},
+                {"slot": "feet", "image_id": feet, "note": "   "},
+            ],
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    [(_, garments)] = generator.calls
+    assert [g.note for g in garments] == ["relaxed oversized tee", None]
+    assert [p["note"] for p in response.json()["pieces"]] == ["relaxed oversized tee", None]
+
+
+def test_outfit_note_reaches_the_model_and_is_shared_with_the_look(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    poster = create_user("jane")
+    tryon = client.post(
+        TRYONS_URL,
+        headers=poster.headers,
+        json={
+            "person_image_id": upload_image(poster),
+            "outfit_image_id": upload_image(poster),
+            "outfit_note": "boxy, cropped fit",
+        },
+    ).json()
+
+    [(_, [garment])] = generator.calls
+    assert garment.note == "boxy, cropped fit"
+    assert tryon["outfit_note"] == "boxy, cropped fit"
+    assert post_tryon_fit(client, poster, tryon)["try_on_source"]["outfit_note"] == "boxy, cropped fit"
+
+
+def test_note_rules(
+    client: TestClient,
+    create_user: Callable[..., AuthedUser],
+    upload_image: Callable[[AuthedUser], str],
+    generator: FakeGenerator,
+) -> None:
+    user = create_user()
+    person, top = upload_image(user), upload_image(user)
+
+    too_long = client.post(
+        TRYONS_URL,
+        headers=user.headers,
+        json={"person_image_id": person, "pieces": [{"slot": "top", "image_id": top, "note": "x" * 101}]},
+    )
+    outfit_note_with_pieces = client.post(
+        TRYONS_URL,
+        headers=user.headers,
+        json={"person_image_id": person, "pieces": [{"slot": "top", "image_id": top}], "outfit_note": "loose"},
+    )
+
+    assert too_long.status_code == 422
+    assert outfit_note_with_pieces.status_code == 422
+    assert generator.calls == []
+
+
+def test_gemini_labels_pieces_with_their_notes() -> None:
+    generator, calls = recording_gemini()
+
+    generator.generate(b"person", [Garment(b"tee", "top", 'relaxed "oversized" tee'), Garment(b"shoes", "feet")])
+
+    contents = describe(calls[0]["contents"])
+    assert contents[2] == (
+        "Image 2 is a top (such as a shirt, t-shirt, or sweater) for the upper body, "
+        "described by its owner as \"relaxed ”oversized” tee\":"
+    )
+    assert contents[4] == "Image 3 is footwear (shoes):"
+
+
+def test_gemini_whole_outfit_note_comes_before_the_prompt() -> None:
+    generator, calls = recording_gemini()
+
+    generator.generate(b"person", [Garment(b"outfit", note="relaxed fit")])
+
+    contents = describe(calls[0]["contents"])
+    assert contents[:2] == ["<person>", "<outfit>"]
+    assert '"relaxed fit"' in contents[2]
+    assert contents[3] == GEMINI_PROMPT
+
+
+def test_both_prompts_say_to_keep_each_items_cut() -> None:
+    # A relaxed tee used to come out tight: the prompts said "fitted to the person's body".
+    assert KEEP_THE_CUT in GEMINI_PROMPT
+    assert KEEP_THE_CUT in PIECES_PROMPT_INSTRUCTIONS
+    assert "fitted to the person" not in GEMINI_PROMPT + PIECES_PROMPT_INSTRUCTIONS

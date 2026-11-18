@@ -90,11 +90,11 @@ def create_tryon(
     if tryon_repository.count_since(db, user.id, since) >= settings.TRYON_DAILY_LIMIT:
         raise DailyLimitReachedError
 
-    # A whole-outfit photo has no slot; each piece has one.
-    slots = [piece.slot.value for piece in pieces] if pieces else [None]
+    # A whole-outfit photo has no slot; each piece has one. Each may have the user's note.
+    labels = [(p.slot.value, p.note) for p in pieces] if pieces else [(None, data.outfit_note)]
     garments = [
-        Garment(jpeg=to_jpeg(storage.read(image.storage_key)), slot=slot)
-        for image, slot in zip(clothing, slots, strict=True)
+        Garment(jpeg=to_jpeg(storage.read(image.storage_key)), slot=slot, note=note)
+        for image, (slot, note) in zip(clothing, labels, strict=True)
     ]
     result = generator.generate(to_jpeg(storage.read(person.storage_key)), garments)
     try:
@@ -106,7 +106,7 @@ def create_tryon(
     if pieces:
         outfit_image_id = None
         tryon_pieces = [
-            TryOnPiece(position=position, slot=piece.slot.value, image_id=image.id)
+            TryOnPiece(position=position, slot=piece.slot.value, image_id=image.id, note=piece.note)
             for position, (piece, image) in enumerate(zip(pieces, clothing, strict=True))
         ]
     else:
@@ -116,6 +116,7 @@ def create_tryon(
         user_id=user.id,
         person_image_id=person.id,
         outfit_image_id=outfit_image_id,
+        outfit_note=None if pieces else data.outfit_note,
         result_image_id=result_image.id,
         source_fit_id=data.fit_id,
         model=settings.TRYON_MODEL,

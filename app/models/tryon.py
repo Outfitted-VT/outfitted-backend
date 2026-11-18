@@ -33,6 +33,8 @@ class TryOn(TimestampMixin, Base):
     source_fit_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("fits.id", ondelete="SET NULL"), index=True
     )
+    # Whole-outfit mode: the user's description of the clothes ("relaxed oversized tee").
+    outfit_note: Mapped[str | None] = mapped_column(String(100))
     # Which model generated it, e.g. "gemini-3.1-flash-image".
     model: Mapped[str] = mapped_column(String(100))
 
@@ -56,5 +58,7 @@ class TryOnPiece(Base):
     # "head", "top", "outerwear", "one_piece", "bottom", "feet", or "accessory".
     slot: Mapped[str] = mapped_column(String(20))
     image_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("images.id", ondelete="SET NULL"))
+    # The user's description of the piece ("relaxed oversized tee"), sent to the model with it.
+    note: Mapped[str | None] = mapped_column(String(100))
 
     image: Mapped[Image | None] = relationship(lazy="joined")
