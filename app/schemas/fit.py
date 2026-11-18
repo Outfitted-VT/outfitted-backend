@@ -224,6 +224,8 @@ class TryOnSource(BaseModel):
     mode: Literal["outfit", "pieces"]
     # Whole-outfit mode only.
     outfit_image: ImageRead | None
+    # Whole-outfit mode only: the poster's description of the clothes, if any.
+    outfit_note: str | None = None
     # Pieces mode only, head to toe. Pieces whose photo was deleted are left out.
     pieces: list[TryOnPieceRead]
 
@@ -238,7 +240,12 @@ class TryOnSource(BaseModel):
             return cls(mode="pieces", outfit_image=None, pieces=pieces) if pieces else None
         if tryon.outfit_image is None:
             return None
-        return cls(mode="outfit", outfit_image=ImageRead.model_validate(tryon.outfit_image), pieces=[])
+        return cls(
+            mode="outfit",
+            outfit_image=ImageRead.model_validate(tryon.outfit_image),
+            outfit_note=tryon.outfit_note,
+            pieces=[],
+        )
 
 
 class FitRead(BaseModel):

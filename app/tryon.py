@@ -33,6 +33,21 @@ CLASHING_CLOTHES = (
     "only what would naturally be worn under it. "
 )
 
+# Generated clothes tended to be pulled tight to the body (a relaxed tee came out fitted), so
+# say to keep each item's own cut. Used by both prompts below.
+KEEP_THE_CUT = (
+    "Keep each item's own cut, length, and silhouette, sized to the person: a relaxed, "
+    "oversized, or boxy item stays loose and drapes away from the body (it is never made "
+    "tighter or more fitted), and a fitted or slim item stays close-fitting. "
+)
+
+# How the user's own descriptions of the clothes are introduced (see Garment.note).
+NOTES_RULE = (
+    "Some items come with the owner's description in quotes. It describes only that "
+    "clothing (its fit, length, or how it is worn): follow it for how the item fits and "
+    "drapes, together with the photo. "
+)
+
 GEMINI_PROMPT = (
     "The first image is a photo of a person. The second image shows one or more clothing "
     "items, either on their own or worn by someone else. Edit the first photo so the person "
@@ -48,9 +63,10 @@ GEMINI_PROMPT = (
     + CLASHING_CLOTHES
     + "Each item appears once: do not layer a copy of it, and do not add any clothing "
     "that isn't in one of the two images. Reproduce each item's color, pattern, material, and "
-    "details faithfully, worn naturally and fitted to the person's body, and styled the way "
+    "details faithfully, worn naturally on the person's body, and styled the way "
     "the second image shows it (for example, a buttoned shirt stays buttoned). "
-    "Never show more of the person's body or skin than the first photo does. "
+    + KEEP_THE_CUT
+    + "Never show more of the person's body or skin than the first photo does. "
     "Keep the person's face, hair, skin tone, body shape, pose, the background, the lighting, "
     "and the framing exactly as in the first photo. Do not add any text."
 )
@@ -82,9 +98,11 @@ PIECES_PROMPT_INSTRUCTIONS = (
     "(including how they stand or pose), or background in it. Each item appears once: do "
     "not layer a copy of it, and do not add "
     "any clothing that isn't one of the labeled items or already on the person. Reproduce "
-    "each item's color, pattern, material, and details faithfully, worn naturally and fitted "
-    "to the person's body. "
-    "Never show more of the person's body or skin than the first photo does. "
+    "each item's color, pattern, material, and details faithfully, worn naturally on the "
+    "person's body. "
+    + KEEP_THE_CUT
+    + NOTES_RULE
+    + "Never show more of the person's body or skin than the first photo does. "
     "Keep the person's face, hair, skin tone, body shape, pose, the background, the lighting, "
     "and the framing exactly as in the first photo. Do not add any text."
 )
@@ -92,10 +110,17 @@ PIECES_PROMPT_INSTRUCTIONS = (
 
 @dataclass(frozen=True)
 class Garment:
-    """A clothing photo for try-on. `slot` is None when the photo is the whole outfit."""
+    """A clothing photo for try-on. `slot` is None when the photo is the whole outfit. `note`
+    is the user's short description of it ("relaxed oversized tee"), if any."""
 
     jpeg: bytes
     slot: str | None = None
+    note: str | None = None
+
+
+def quoted(note: str) -> str:
+    # Straight double quotes delimit the note in the prompt, so use curly ones inside it.
+    return '"' + note.replace('"', "\u201d") + '"'
 
 
 class TryOnError(Exception):
@@ -183,13 +208,25 @@ class GeminiImageGenerator:
             return types.Part.from_bytes(data=jpeg, mime_type=INPUT_MIME_TYPE)
 
         if len(garments) == 1 and garments[0].slot is None:
-            # Whole outfit: one photo, the original prompt.
-            return [image(person_jpeg), image(garments[0].jpeg), GEMINI_PROMPT]
+            # Whole outfit: one photo, the original prompt, and the owner's description if any.
+            note = garments[0].note
+            if not note:
+                return [image(person_jpeg), image(garments[0].jpeg), GEMINI_PROMPT]
+            return [
+                image(person_jpeg),
+                image(garments[0].jpeg),
+                f"The owner describes the clothes in the second image as {quoted(note)}. This "
+                "describes only the clothing: follow it for how the clothes fit and drape.",
+                GEMINI_PROMPT,
+            ]
 
         contents: list[Any] = [image(person_jpeg), PIECES_PROMPT_INTRO]
         for number, garment in enumerate(garments, start=2):
+            label = f"Image {number} is {SLOT_DESCRIPTIONS[garment.slot]}"
+            if garment.note:
+                label += f", described by its owner as {quoted(garment.note)}"
             contents += [
-                f"Image {number} is {SLOT_DESCRIPTIONS[garment.slot]}:",
+                f"{label}:",
                 image(garment.jpeg),
             ]
         contents.append(PIECES_PROMPT_INSTRUCTIONS)

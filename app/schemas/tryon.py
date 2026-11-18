@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from app.schemas.image import ImageRead
 
@@ -23,10 +23,25 @@ class PieceSlot(StrEnum):
 # Head to toe; pieces are sent to the model in this order.
 SLOT_ORDER = list(PieceSlot)
 
+NOTE_MAX_LENGTH = 100
+NOTE_DESCRIPTION = (
+    'Optional: how the clothing fits or should look, e.g. "relaxed oversized tee" or '
+    '"cropped, boxy fit". Sent to the model with the photo.'
+)
+
+
+def _clean_note(note: str | None) -> str | None:
+    # One line, no surrounding spaces; blank means no note.
+    note = " ".join((note or "").split())
+    return note or None
+
 
 class TryOnPieceIn(BaseModel):
     slot: PieceSlot
     image_id: uuid.UUID = Field(description="A photo of the piece, uploaded with `POST /images`.")
+    note: str | None = Field(default=None, max_length=NOTE_MAX_LENGTH, description=NOTE_DESCRIPTION)
+
+    _clean = field_validator("note")(_clean_note)
 
 
 class TryOnCreate(BaseModel):
@@ -36,6 +51,9 @@ class TryOnCreate(BaseModel):
     person_image_id: uuid.UUID
     outfit_image_id: uuid.UUID | None = Field(
         default=None, description="Whole-outfit mode: one photo of the full outfit."
+    )
+    outfit_note: str | None = Field(
+        default=None, max_length=NOTE_MAX_LENGTH, description=f"Whole-outfit mode. {NOTE_DESCRIPTION}"
     )
     pieces: list[TryOnPieceIn] | None = Field(
         default=None,
@@ -68,10 +86,14 @@ class TryOnCreate(BaseModel):
         }
     )
 
+    _clean = field_validator("outfit_note")(_clean_note)
+
     @model_validator(mode="after")
     def check_mode(self) -> Self:
         if (self.outfit_image_id is None) == (self.pieces is None):
             raise ValueError("Send either outfit_image_id or pieces, not both")
+        if self.pieces is not None and self.outfit_note:
+            raise ValueError("outfit_note is for whole-outfit mode; give each piece its own note")
         if self.pieces is None:
             return self
 
@@ -91,6 +113,7 @@ class TryOnCreate(BaseModel):
 class TryOnPieceRead(BaseModel):
     slot: PieceSlot
     image: ImageRead | None = Field(description="`null` if the image was deleted later.")
+    note: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -102,6 +125,7 @@ class TryOnRead(BaseModel):
     person_image: ImageRead | None
     # Whole-outfit mode only; `null` in pieces mode or if the image was deleted.
     outfit_image: ImageRead | None
+    outfit_note: str | None = None
     # Pieces mode only, head to toe; empty in whole-outfit mode.
     pieces: list[TryOnPieceRead]
     model: str
