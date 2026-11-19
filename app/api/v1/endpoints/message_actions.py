@@ -6,6 +6,7 @@ from app.api.deps import CurrentUser, SessionDep
 from app.schemas.conversation import VoteIn, VoteResult
 from app.schemas.error import ErrorResponse
 from app.schemas.fit import SavedPieceRead
+from app.schemas.look import SavedLookRead
 from app.services import conversation as service
 from app.services import styling
 
@@ -68,25 +69,26 @@ LOOK_NOT_FOUND = {
 }
 
 
-def _save_look(message_id: uuid.UUID, index: int | None, current_user, db) -> list[SavedPieceRead]:
-    try:
-        pieces = styling.save_look_pieces(db, current_user, message_id, index)
-    except styling.LookNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Look not found") from None
-    return [SavedPieceRead.from_model(piece) for piece in pieces]
+def _look_not_found() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Look not found")
 
 
 @router.post(
     "/{message_id}/look/save",
-    response_model=list[SavedPieceRead],
+    response_model=SavedLookRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Save every piece of a styled look",
+    summary="Save a styled look",
     responses=LOOK_NOT_FOUND,
 )
-def save_look(message_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> list[SavedPieceRead]:
-    """Copies each piece (name, link, photo) into your saved pieces, in the look's order. Pieces you
-    already saved from it are returned as they are."""
-    return _save_look(message_id, None, current_user, db)
+def save_look(message_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> SavedLookRead:
+    """Saves the whole look (the try-on, the stylist's note and every piece with its link), listed
+    with your saved fits: GET /users/me/saved-looks. Saving it again returns your existing save.
+    Unsave with DELETE /users/me/saved-looks/{id}."""
+    try:
+        look = styling.save_look(db, current_user, message_id)
+    except styling.LookNotFoundError:
+        raise _look_not_found() from None
+    return styling.saved_look_views(db, [look])[0]
 
 
 @router.post(
@@ -97,6 +99,10 @@ def save_look(message_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) 
     responses=LOOK_NOT_FOUND,
 )
 def save_look_piece(message_id: uuid.UUID, index: int, current_user: CurrentUser, db: SessionDep) -> SavedPieceRead:
-    """`index` is the piece's place in the look, from 0. Saving it again returns your existing save.
-    Unsave with DELETE /users/me/saved-pieces/{id}."""
-    return _save_look(message_id, index, current_user, db)[0]
+    """`index` is the piece's place in the look, from 0. It goes to your saved pieces. Saving it
+    again returns your existing save. Unsave with DELETE /users/me/saved-pieces/{id}."""
+    try:
+        piece = styling.save_look_piece(db, current_user, message_id, index)
+    except styling.LookNotFoundError:
+        raise _look_not_found() from None
+    return SavedPieceRead.from_model(piece)
