@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, SessionDep, StorageDep, TryOnGeneratorDep
 from app.schemas.error import ErrorResponse
 from app.schemas.tryon import TryOnCreate, TryOnRead
+from app.services import styling
 from app.services.image import ImageNotFoundError
 from app.services.tryon import DailyLimitReachedError, FitTryOnNotAllowedError, create_tryon
 from app.tryon import TryOnBlockedError, TryOnUnavailableError, TryOnUnsupportedError
@@ -78,6 +79,12 @@ def create(
         tryon = create_tryon(db, storage, generator, current_user, tryon_in)
     except ImageNotFoundError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image not found") from None
+    except styling.StyleRequestNotFoundError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Style request not found") from None
+    except styling.OwnStyleRequestError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Style your own request with a normal try-on"
+        ) from None
     except FitTryOnNotAllowedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Try-ons are turned off for this fit"

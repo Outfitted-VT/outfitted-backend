@@ -33,6 +33,7 @@ from app.schemas.pagination import Page
 from app.schemas.user import UserSummary
 from app.services import notification as notifications
 from app.services import streak as streaks
+from app.services import styling
 from app.services.image import get_owned_images
 
 LIVE_FIT_WINDOW = timedelta(hours=24)
@@ -104,6 +105,8 @@ def _tally(counts: dict[str, int], my_vote: str | None) -> VoteTally:
 def _image_ids(message: Message) -> list[uuid.UUID]:
     payload = message.payload or {}
     ids = [payload.get("image_id"), (payload.get("product") or {}).get("image_id")]
+    if message.kind == "styled_look":
+        ids += styling.look_image_ids(payload)
     return [uuid.UUID(i) for i in ids if i]
 
 
@@ -120,10 +123,31 @@ def _fit_card(fit) -> dict | None:
     }
 
 
-def _resolve_payload(message: Message, images: dict[uuid.UUID, ImageRead], fits: dict | None = None) -> dict | None:
+def _look_view(payload: dict, images: dict[uuid.UUID, ImageRead], saved: dict[int, str]) -> dict:
+    """A styled look as the chat shows it: the try-on photo, and each piece with its photo and
+    the viewer's saved piece id (null if they haven't saved it)."""
+    image = lambda i: images.get(uuid.UUID(i)) if i else None
+    pieces = []
+    for index, piece in enumerate(payload.get("pieces", [])):
+        piece = dict(piece)
+        piece["photo"] = image(piece.pop("image_id", None))
+        piece["saved_piece_id"] = saved.get(index)
+        pieces.append(piece)
+    return {
+        "request_id": payload.get("request_id"),
+        "tryon_image": image(payload.get("tryon_image_id")),
+        "pieces": pieces,
+    }
+
+
+def _resolve_payload(
+    message: Message, images: dict[uuid.UUID, ImageRead], fits: dict | None = None, saved: dict | None = None
+) -> dict | None:
     if message.deleted_at is not None or not message.payload:
         return None
     payload = dict(message.payload)
+    if message.kind == "styled_look":
+        return _look_view(payload, images, (saved or {}).get(message.id, {}))
     if message.kind == "fit":
         # null when the fit was deleted since (the chat shows "no longer available").
         return {"fit": (fits or {}).get(payload.get("fit_id"))}
@@ -147,6 +171,8 @@ def message_views(db: Session, viewer_id: uuid.UUID | None, messages: list[Messa
     checks = [m.id for m in messages if m.kind == "fit_check"]
     counts = repo.vote_counts(db, checks)
     mine = repo.votes_by_user(db, viewer_id, checks) if viewer_id else {}
+    looks = [m.id for m in messages if m.kind == "styled_look"]
+    saved = styling.saved_look_pieces(db, viewer_id, looks) if viewer_id else {}
     return [
         MessageRead(
             id=m.id,
@@ -154,7 +180,7 @@ def message_views(db: Session, viewer_id: uuid.UUID | None, messages: list[Messa
             sender=_summary(m.sender),
             kind=m.kind,
             body=None if m.deleted_at else m.body,
-            payload=_resolve_payload(m, images, fits),
+            payload=_resolve_payload(m, images, fits, saved),
             client_id=m.client_id,
             created_at=m.created_at,
             edited_at=m.edited_at,
@@ -375,6 +401,10 @@ def _preview(message: Message) -> str:
         return f"Shared {payload.get('product', {}).get('name', 'a product')}"
     if message.kind == "fit":
         return "Shared a fit"
+    if message.kind == "style_request":
+        return f"Style me: {message.body}" if message.body else "Asked you to style them"
+    if message.kind == "styled_look":
+        return "Styled a look for you"
     return message.body or ""
 
 
@@ -398,17 +428,28 @@ def _notify_offline(
 
 def send_message(db: Session, user: User, conversation_id: uuid.UUID, data: MessageCreate) -> MessageRead:
     """Raises ConversationNotFoundError, RateLimitedError, ClientIdConflictError, FitNotShareableError,
-    and ImageNotFoundError (app.services.image)."""
+    ImageNotFoundError (app.services.image), and for a styled look the errors of
+    app.services.styling.look_payload."""
     member = _membership(db, conversation_id, user)
     message = Message(
         conversation_id=conversation_id,
         sender_id=user.id,
         kind=data.kind,
         body=data.body if data.kind != "fit_check" else data.question,
-        payload=_shared_fit(db, user, conversation_id, data.fit_id) if data.kind == "fit" else _payload(db, user, data),
+        payload=_message_payload(db, user, conversation_id, data),
         client_id=data.client_id,
     )
     return _post(db, user, member, message)[0]
+
+
+def _message_payload(db: Session, user: User, conversation_id: uuid.UUID, data: MessageCreate) -> dict | None:
+    if data.kind == "fit":
+        return _shared_fit(db, user, conversation_id, data.fit_id)
+    if data.kind == "style_request":
+        return styling.request_payload(db, user, data.image_id)
+    if data.kind == "styled_look":
+        return styling.look_payload(db, user, conversation_id, data.request_id, data.look)
+    return _payload(db, user, data)
 
 
 def send_story_reply(

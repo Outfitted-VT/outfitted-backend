@@ -75,7 +75,7 @@ class SavedPiecePage:
     next_cursor: str | None
 
 
-def _photo_for(fit, item, index: int):
+def photo_for(fit, item, index: int):
     """The fit photo a piece is on, and whether several pieces share it (then zoom on the pin).
     Same rule the app uses to draw a piece (crop() in the frontend's fit-card.js). A piece with
     its own photo (a try-on's clothing photo) uses that, whole."""
@@ -102,7 +102,7 @@ def save_piece(db: Session, user: User, fit_id: uuid.UUID, item_id: uuid.UUID) -
     existing = engagement_repository.find_saved_piece(db, user.id, fit.id, item.category, item.name)
     if existing is not None:
         return existing
-    image, zoom = _photo_for(fit, item, index)
+    image, zoom = photo_for(fit, item, index)
     piece = SavedPiece(
         user_id=user.id,
         fit_id=fit.id,

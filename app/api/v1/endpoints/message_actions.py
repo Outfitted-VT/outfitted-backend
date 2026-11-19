@@ -5,7 +5,9 @@ from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, SessionDep
 from app.schemas.conversation import VoteIn, VoteResult
 from app.schemas.error import ErrorResponse
+from app.schemas.fit import SavedPieceRead
 from app.services import conversation as service
+from app.services import styling
 
 router = APIRouter()
 
@@ -55,3 +57,46 @@ def delete_message(message_id: uuid.UUID, current_user: CurrentUser, db: Session
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete your own messages"
         ) from None
+
+
+LOOK_NOT_FOUND = {
+    status.HTTP_404_NOT_FOUND: {
+        "model": ErrorResponse,
+        "description": "No styled look (or piece) with that id in a chat you are in.",
+        "content": {"application/json": {"example": {"detail": "Look not found"}}},
+    }
+}
+
+
+def _save_look(message_id: uuid.UUID, index: int | None, current_user, db) -> list[SavedPieceRead]:
+    try:
+        pieces = styling.save_look_pieces(db, current_user, message_id, index)
+    except styling.LookNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Look not found") from None
+    return [SavedPieceRead.from_model(piece) for piece in pieces]
+
+
+@router.post(
+    "/{message_id}/look/save",
+    response_model=list[SavedPieceRead],
+    status_code=status.HTTP_201_CREATED,
+    summary="Save every piece of a styled look",
+    responses=LOOK_NOT_FOUND,
+)
+def save_look(message_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> list[SavedPieceRead]:
+    """Copies each piece (name, link, photo) into your saved pieces, in the look's order. Pieces you
+    already saved from it are returned as they are."""
+    return _save_look(message_id, None, current_user, db)
+
+
+@router.post(
+    "/{message_id}/look/pieces/{index}/save",
+    response_model=SavedPieceRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Save one piece of a styled look",
+    responses=LOOK_NOT_FOUND,
+)
+def save_look_piece(message_id: uuid.UUID, index: int, current_user: CurrentUser, db: SessionDep) -> SavedPieceRead:
+    """`index` is the piece's place in the look, from 0. Saving it again returns your existing save.
+    Unsave with DELETE /users/me/saved-pieces/{id}."""
+    return _save_look(message_id, index, current_user, db)[0]

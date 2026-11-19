@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, String, Uuid, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -68,6 +68,11 @@ class SavedPiece(Base):
     pin_x: Mapped[float | None] = mapped_column(Float)
     pin_y: Mapped[float | None] = mapped_column(Float)
     zoom: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Saved from a styled look a friend sent in chat: that message and the piece's place in it.
+    look_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"), index=True
+    )
+    look_index: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, server_default=func.now()
     )

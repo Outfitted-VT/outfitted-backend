@@ -15,6 +15,7 @@ from app.repositories import fit as fit_repository
 from app.repositories import image as image_repository
 from app.repositories import tryon as tryon_repository
 from app.schemas.tryon import TryOnCreate
+from app.services import styling
 from app.services.image import ImageNotFoundError, get_owned_images, upload_image
 from app.storage import Storage
 from app.tryon import Garment, TryOnBlockedError, TryOnGenerator, TryOnUnsupportedError
@@ -69,16 +70,26 @@ def create_tryon(
 
     The person photo must be the user's. Clothing photos must be too, unless `fit_id` names a
     fit they may try on ("Try this look"): then that fit's photos and its try-on's clothing
-    photos are allowed as well.
+    photos are allowed as well. With `style_request_id` (styling a friend), the person photo is
+    the one the friend sent with that request, and photos of the user's saved pieces and saved
+    fits are allowed too.
 
-    Raises ImageNotFoundError if an image can't be used, FitTryOnNotAllowedError,
+    Raises ImageNotFoundError if an image can't be used, FitTryOnNotAllowedError, the
+    styling module's StyleRequestNotFoundError and OwnStyleRequestError,
     TryOnUnsupportedError if the model can't take this many photos, DailyLimitReachedError,
     and TryOnError from the generator.
     """
     pieces = data.pieces or []
     clothing_ids = [data.outfit_image_id] if data.outfit_image_id else [p.image_id for p in pieces]
-    [person] = get_owned_images(db, user, [data.person_image_id])
     shared = _shared_clothing_ids(db, user, data.fit_id) if data.fit_id else set()
+    if data.style_request_id:
+        # Styling a friend: their photo from the request, dressed in what the stylist saved.
+        person, saved = styling.tryon_access(
+            db, user, data.style_request_id, data.person_image_id, clothing_ids
+        )
+        shared |= saved
+    else:
+        [person] = get_owned_images(db, user, [data.person_image_id])
     clothing = _clothing_images(db, user, clothing_ids, shared)
 
     if len(clothing) > generator.max_garments:
