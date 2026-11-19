@@ -123,9 +123,9 @@ def _fit_card(fit) -> dict | None:
     }
 
 
-def _look_view(payload: dict, images: dict[uuid.UUID, ImageRead], saved: dict[int, str]) -> dict:
-    """A styled look as the chat shows it: the try-on photo, and each piece with its photo and
-    the viewer's saved piece id (null if they haven't saved it)."""
+def _look_view(payload: dict, images: dict[uuid.UUID, ImageRead], saved: dict[int, str], saved_look: str | None) -> dict:
+    """A styled look as the chat shows it: the try-on photo, each piece with its photo and the
+    viewer's saved piece id, and the viewer's saved look id (each null if not saved)."""
     image = lambda i: images.get(uuid.UUID(i)) if i else None
     pieces = []
     for index, piece in enumerate(payload.get("pieces", [])):
@@ -137,17 +137,22 @@ def _look_view(payload: dict, images: dict[uuid.UUID, ImageRead], saved: dict[in
         "request_id": payload.get("request_id"),
         "tryon_image": image(payload.get("tryon_image_id")),
         "pieces": pieces,
+        "saved_look_id": saved_look,
     }
 
 
 def _resolve_payload(
-    message: Message, images: dict[uuid.UUID, ImageRead], fits: dict | None = None, saved: dict | None = None
+    message: Message,
+    images: dict[uuid.UUID, ImageRead],
+    fits: dict | None = None,
+    saved: dict | None = None,
+    saved_looks: dict | None = None,
 ) -> dict | None:
     if message.deleted_at is not None or not message.payload:
         return None
     payload = dict(message.payload)
     if message.kind == "styled_look":
-        return _look_view(payload, images, (saved or {}).get(message.id, {}))
+        return _look_view(payload, images, (saved or {}).get(message.id, {}), (saved_looks or {}).get(message.id))
     if message.kind == "fit":
         # null when the fit was deleted since (the chat shows "no longer available").
         return {"fit": (fits or {}).get(payload.get("fit_id"))}
@@ -173,6 +178,7 @@ def message_views(db: Session, viewer_id: uuid.UUID | None, messages: list[Messa
     mine = repo.votes_by_user(db, viewer_id, checks) if viewer_id else {}
     looks = [m.id for m in messages if m.kind == "styled_look"]
     saved = styling.saved_look_pieces(db, viewer_id, looks) if viewer_id else {}
+    saved_looks = styling.saved_look_ids(db, viewer_id, looks) if viewer_id else {}
     return [
         MessageRead(
             id=m.id,
@@ -180,7 +186,7 @@ def message_views(db: Session, viewer_id: uuid.UUID | None, messages: list[Messa
             sender=_summary(m.sender),
             kind=m.kind,
             body=None if m.deleted_at else m.body,
-            payload=_resolve_payload(m, images, fits, saved),
+            payload=_resolve_payload(m, images, fits, saved, saved_looks),
             client_id=m.client_id,
             created_at=m.created_at,
             edited_at=m.edited_at,

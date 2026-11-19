@@ -7,6 +7,7 @@ from app.api.deps import CurrentUser, PageCursor, PageLimit, SessionDep
 from app.core.pagination import InvalidCursorError
 from app.schemas.error import ErrorResponse
 from app.schemas.fit import FitRead, SavedPieceRead
+from app.schemas.look import SavedLookRead
 from app.schemas.pagination import Page
 from app.schemas.notification import NotificationSettingsRead, NotificationSettingsUpdate
 from app.schemas.story import StoryGroup
@@ -17,6 +18,7 @@ from app.services.engagement import list_saved_fits
 from app.services import follow as follow_service
 from app.services import notification as notification_service
 from app.services import story as story_service
+from app.services import styling as styling_service
 from app.services import streak as streak_service
 from app.services.fit import list_fits
 from app.services.image import ImageNotFoundError
@@ -199,6 +201,37 @@ def delete_saved_piece(piece_id: uuid.UUID, current_user: CurrentUser, db: Sessi
         engagement_service.unsave_piece(db, current_user, piece_id)
     except engagement_service.SavedPieceNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved piece not found") from None
+
+
+@router.get(
+    "/me/saved-looks",
+    response_model=Page[SavedLookRead],
+    summary="List your saved looks",
+    responses={**UNAUTHORIZED_RESPONSE, **INVALID_CURSOR_RESPONSE},
+)
+def read_saved_looks(
+    current_user: CurrentUser, db: SessionDep, limit: PageLimit = 20, cursor: PageCursor = None
+) -> Page[SavedLookRead]:
+    """Styled looks friends sent you in chat that you saved (Style a Friend), most recently saved
+    first. Only you can see them."""
+    try:
+        looks, next_cursor = styling_service.list_saved_looks(db, current_user, limit=limit, cursor=cursor)
+    except InvalidCursorError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from None
+    return Page(items=styling_service.saved_look_views(db, looks), next_cursor=next_cursor)
+
+
+@router.delete(
+    "/me/saved-looks/{look_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Unsave a look",
+    responses={**UNAUTHORIZED_RESPONSE, status.HTTP_404_NOT_FOUND: {"model": ErrorResponse, "description": "Saved look not found."}},
+)
+def delete_saved_look(look_id: uuid.UUID, current_user: CurrentUser, db: SessionDep) -> None:
+    try:
+        styling_service.unsave_look(db, current_user, look_id)
+    except styling_service.SavedLookNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved look not found") from None
 
 
 @router.get(

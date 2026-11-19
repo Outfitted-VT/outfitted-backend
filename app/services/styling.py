@@ -9,7 +9,8 @@ Both are chat messages:
   on the asker's photo. The pieces are copied into the message, so the look stays as sent even
   if the stylist unsaves or the poster edits a fit later.
 
-The person who gets the look can save one piece, or every piece, to their saved pieces.
+The person who gets the look can save one piece (to their saved pieces) or the whole look (a
+SavedLook, listed with their saved fits).
 """
 
 import uuid
@@ -18,7 +19,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.conversation import Message
-from app.models.engagement import FitSave, SavedPiece
+from app.core.pagination import decode_cursor, encode_cursor
+from app.models.engagement import FitSave, SavedLook, SavedPiece
 from app.models.fit import Fit, FitImage, FitItem
 from app.models.image import Image
 from app.models.tryon import TryOn
@@ -28,6 +30,9 @@ from app.repositories import engagement as engagement_repository
 from app.repositories import fit as fit_repository
 from app.repositories import image as image_repository
 from app.schemas.conversation import LookIn, LookPieceIn
+from app.schemas.image import ImageRead
+from app.schemas.look import LookPieceRead, SavedLookRead
+from app.schemas.user import UserSummary
 from app.services.engagement import photo_for
 from app.services.fit import FitNotFoundError, get_fit
 from app.services.image import ImageNotFoundError, get_owned_images
@@ -51,6 +56,10 @@ class LookTryOnNotFoundError(Exception):
 
 class LookNotFoundError(Exception):
     """No styled look (or piece) with that id that the user can see."""
+
+
+class SavedLookNotFoundError(Exception):
+    """No saved look with that id (or it's someone else's)."""
 
 
 # --- Asking --------------------------------------------------------------------------------
@@ -278,20 +287,105 @@ def _save(db: Session, user: User, message: Message, index: int, piece: dict) ->
     return saved
 
 
-def save_look_pieces(db: Session, user: User, message_id: uuid.UUID, index: int | None = None) -> list[SavedPiece]:
-    """Save one piece of a styled look (`index`), or all of them. Saving again returns the existing
-    saves. Raises LookNotFoundError."""
+def save_look_piece(db: Session, user: User, message_id: uuid.UUID, index: int) -> SavedPiece:
+    """Save one piece of a styled look to the user's saved pieces. Saving it again returns the
+    existing save. Raises LookNotFoundError."""
     message = _look(db, user, message_id)
     pieces = (message.payload or {}).get("pieces", [])
-    indexes = range(len(pieces)) if index is None else [index]
-    if index is not None and not 0 <= index < len(pieces):
+    if not 0 <= index < len(pieces):
         raise LookNotFoundError
-    existing = _existing(db, user, message.id)
-    saved = [existing.get(i) or _save(db, user, message, i, pieces[i]) for i in indexes]
+    saved = _existing(db, user, message.id).get(index) or _save(db, user, message, index, pieces[index])
     db.commit()
-    for piece in saved:
-        db.refresh(piece)
+    db.refresh(saved)
     return saved
+
+
+def save_look(db: Session, user: User, message_id: uuid.UUID) -> SavedLook:
+    """Save the whole look (listed with the user's saved fits). Saving it again returns the
+    existing save. Raises LookNotFoundError."""
+    message = _look(db, user, message_id)
+    existing = db.scalar(select(SavedLook).where(SavedLook.user_id == user.id, SavedLook.message_id == message.id))
+    if existing is not None:
+        return existing
+    payload = message.payload or {}
+    tryon_image_id = payload.get("tryon_image_id")
+    look = SavedLook(
+        user_id=user.id,
+        message_id=message.id,
+        conversation_id=message.conversation_id,
+        stylist_id=message.sender_id,
+        note=message.body,
+        tryon_image_id=uuid.UUID(tryon_image_id) if tryon_image_id else None,
+        pieces=payload.get("pieces", []),
+    )
+    if look.tryon_image_id is not None and image_repository.get(db, look.tryon_image_id) is None:
+        look.tryon_image_id = None
+    db.add(look)
+    db.commit()
+    db.refresh(look)
+    return look
+
+
+def unsave_look(db: Session, user: User, look_id: uuid.UUID) -> None:
+    """Raises SavedLookNotFoundError (also for someone else's)."""
+    look = db.get(SavedLook, look_id)
+    if look is None or look.user_id != user.id:
+        raise SavedLookNotFoundError
+    db.delete(look)
+    db.commit()
+
+
+def list_saved_looks(db: Session, user: User, *, limit: int, cursor: str | None) -> tuple[list[SavedLook], str | None]:
+    """Newest first. Raises InvalidCursorError."""
+    query = select(SavedLook).where(SavedLook.user_id == user.id)
+    if cursor:
+        created_at, look_id = decode_cursor(cursor)
+        query = query.where(
+            (SavedLook.created_at < created_at) | ((SavedLook.created_at == created_at) & (SavedLook.id < look_id))
+        )
+    rows = list(db.scalars(query.order_by(SavedLook.created_at.desc(), SavedLook.id.desc()).limit(limit + 1)))
+    page = rows[:limit]
+    next_cursor = encode_cursor(page[-1].created_at, page[-1].id) if len(rows) > limit and page else None
+    return page, next_cursor
+
+
+def saved_look_views(db: Session, looks: list[SavedLook]) -> list[SavedLookRead]:
+    ids = {uuid.UUID(p["image_id"]) for look in looks for p in look.pieces or [] if p.get("image_id")}
+    images = {i.id: ImageRead.model_validate(i) for i in image_repository.get_many(db, list(ids))} if ids else {}
+    views = []
+    for look in looks:
+        pieces = []
+        for piece in look.pieces or []:
+            piece = dict(piece)
+            image_id = piece.pop("image_id", None)
+            piece["photo"] = images.get(uuid.UUID(image_id)) if image_id else None
+            pieces.append(LookPieceRead.model_validate(piece))
+        stylist = look.stylist if look.stylist is not None and look.stylist.is_active else None
+        views.append(
+            SavedLookRead(
+                id=look.id,
+                message_id=look.message_id,
+                conversation_id=look.conversation_id,
+                stylist=UserSummary.model_validate(stylist) if stylist else None,
+                note=look.note,
+                tryon_image=ImageRead.model_validate(look.tryon_image) if look.tryon_image else None,
+                pieces=pieces,
+                created_at=look.created_at,
+            )
+        )
+    return views
+
+
+def saved_look_ids(db: Session, viewer_id: uuid.UUID, message_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    """The viewer's saved looks among these messages: {message_id: saved look id}."""
+    if not message_ids:
+        return {}
+    rows = db.execute(
+        select(SavedLook.message_id, SavedLook.id).where(
+            SavedLook.user_id == viewer_id, SavedLook.message_id.in_(message_ids)
+        )
+    )
+    return {message_id: str(look_id) for message_id, look_id in rows}
 
 
 def saved_look_pieces(db: Session, viewer_id: uuid.UUID, message_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict[int, str]]:

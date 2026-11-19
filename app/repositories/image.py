@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models.conversation import Message
 from app.models.detection import ImageDetection
+from app.models.engagement import SavedLook
 from app.models.fit import FitImage, FitItem
 from app.models.image import Image
 from app.models.story import Story
@@ -43,6 +44,9 @@ def _references(image: Image) -> list:
         select(Story.id).where(Story.image_id == image.id),
         select(Message.id).where(Message.kind != "story_reply", cast(Message.payload, String).contains(str(image.id))),
         select(WardrobeItem.id).where(WardrobeItem.image_url.contains(image.storage_key)),
+        select(SavedLook.id).where(
+            or_(SavedLook.tryon_image_id == image.id, cast(SavedLook.pieces, String).contains(str(image.id)))
+        ),
     ]
 
 

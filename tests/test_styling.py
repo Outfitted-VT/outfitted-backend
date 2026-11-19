@@ -16,6 +16,7 @@ MESSAGES_URL = "/api/v1/messages"
 FITS_URL = "/api/v1/fits"
 TRYONS_URL = "/api/v1/tryons"
 PIECES_URL = "/api/v1/users/me/saved-pieces"
+LOOKS_URL = "/api/v1/users/me/saved-looks"
 
 
 @pytest.fixture(autouse=True)
@@ -299,18 +300,56 @@ def test_save_pieces_of_a_look(client: TestClient, people, chat, look_parts) -> 
     # Saving again returns the same save.
     assert client.post(f"{url}/pieces/2/save", headers=jane.headers).json()["id"] == jeans["id"]
 
-    everything = client.post(f"{url}/save", headers=jane.headers)
-    assert everything.status_code == 201, everything.text
-    pieces = everything.json()
-    assert [p["name"] for p in pieces] == ["Relaxed tee", "Sambas", "Wide-leg jeans"]
-    assert pieces[2]["id"] == jeans["id"]
-    assert pieces[0]["source_username"] == "carol" and pieces[0]["fit_id"] == fit["id"]
-
     listed = client.get(PIECES_URL, headers=jane.headers).json()["items"]
-    assert {p["id"] for p in listed} == {p["id"] for p in pieces}
+    assert [p["id"] for p in listed] == [jeans["id"]]
     # The chat shows Jane which pieces she saved, and nobody else.
-    assert [p["saved_piece_id"] for p in thread(client, jane, chat)[0]["payload"]["pieces"]] == [p["id"] for p in pieces]
+    assert [p["saved_piece_id"] for p in thread(client, jane, chat)[0]["payload"]["pieces"]] == [None, None, jeans["id"]]
     assert [p["saved_piece_id"] for p in thread(client, bob, chat)[0]["payload"]["pieces"]] == [None, None, None]
+
+
+def test_save_the_whole_look(client: TestClient, people, chat, look_parts, upload_image, generator: FakeGenerator) -> None:
+    jane, bob, _ = people
+    fit, saved, upload = look_parts
+    photo = upload_image(jane)
+    request = ask(client, jane, chat, image_id=photo)
+    tryon = client.post(
+        TRYONS_URL,
+        headers=bob.headers,
+        json={"person_image_id": photo, "outfit_image_id": upload, "style_request_id": request["id"]},
+    ).json()
+    look = send(client, bob, chat, **look_body(request["id"], fit, saved, upload, tryon_id=tryon["id"])).json()
+
+    response = client.post(f"{MESSAGES_URL}/{look['id']}/look/save", headers=jane.headers)
+
+    assert response.status_code == 201, response.text
+    saved_look = response.json()
+    assert saved_look["message_id"] == look["id"] and saved_look["conversation_id"] == chat
+    assert saved_look["stylist"]["username"] == "bob"
+    assert saved_look["note"] == "Wear the tee untucked"
+    assert saved_look["tryon_image"]["id"] == tryon["result_image"]["id"]
+    assert [p["name"] for p in saved_look["pieces"]] == ["Relaxed tee", "Sambas", "Wide-leg jeans"]
+    assert saved_look["pieces"][2]["photo"]["id"] == upload
+    assert saved_look["pieces"][2]["url"] == "https://shop.example/jeans"
+    assert saved_look["pieces"][0]["source_username"] == "carol"
+    # Saving again returns the same save.
+    assert client.post(f"{MESSAGES_URL}/{look['id']}/look/save", headers=jane.headers).json()["id"] == saved_look["id"]
+    # A whole look goes to saved looks, not saved pieces.
+    assert client.get(PIECES_URL, headers=jane.headers).json()["items"] == []
+    listed = client.get(LOOKS_URL, headers=jane.headers).json()["items"]
+    assert [item["id"] for item in listed] == [saved_look["id"]]
+    assert client.get(LOOKS_URL, headers=bob.headers).json()["items"] == []
+    assert thread(client, jane, chat)[0]["payload"]["saved_look_id"] == saved_look["id"]
+    assert thread(client, bob, chat)[0]["payload"]["saved_look_id"] is None
+
+    # It stays when Bob deletes the message.
+    assert client.delete(f"{MESSAGES_URL}/{look['id']}", headers=bob.headers).status_code == 204
+    kept = client.get(LOOKS_URL, headers=jane.headers).json()["items"][0]
+    assert kept["message_id"] == look["id"] and kept["pieces"][2]["photo"]["id"] == upload
+
+    # Only Jane can unsave it.
+    assert client.delete(f"{LOOKS_URL}/{saved_look['id']}", headers=bob.headers).status_code == 404
+    assert client.delete(f"{LOOKS_URL}/{saved_look['id']}", headers=jane.headers).status_code == 204
+    assert client.get(LOOKS_URL, headers=jane.headers).json()["items"] == []
 
 
 def test_saving_a_look_rules(client: TestClient, people, chat, look_parts) -> None:

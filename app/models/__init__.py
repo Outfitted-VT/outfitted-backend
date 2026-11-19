@@ -5,7 +5,7 @@ from app.models.comment import FitComment
 from app.models.conversation import Conversation, ConversationMember, FitCheckVote, Message
 from app.models.detection import ImageDetection
 from app.models.device import DeviceToken
-from app.models.engagement import FitLike, FitSave, SavedPiece
+from app.models.engagement import FitLike, FitSave, SavedLook, SavedPiece
 from app.models.fit import Fit, FitImage, FitItem, FitTag
 from app.models.follow import Follow
 from app.models.image import Image
@@ -35,6 +35,7 @@ __all__ = [
     "FitItem",
     "FitLike",
     "FitSave",
+    "SavedLook",
     "SavedPiece",
     "FitTag",
     "FitVote",
