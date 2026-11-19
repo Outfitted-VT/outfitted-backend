@@ -51,14 +51,63 @@ class ProductIn(BaseModel):
     image_id: uuid.UUID | None = None
 
 
+LOOK_MAX_PIECES = 12
+LookCategory = Literal[
+    "top", "bottom", "dress", "outerwear", "shoes", "bag", "accessory", "jewelry", "headwear", "other"
+]
+HttpUrl = Annotated[str | None, Field(max_length=2048, pattern=r"^https?://")]
+
+
+class LookPieceIn(BaseModel):
+    """One piece of a styled look, from exactly one source:
+
+    - `saved_piece_id`: one of your saved pieces.
+    - `fit_id` + `item_id`: a piece of a fit you can see (e.g. one you saved).
+    - `image_id`: a photo you uploaded with `POST /images`; then `name` and `category` too.
+
+    `name`, `brand`, `color` and `url` replace the source's own (add a shop link, for example).
+    """
+
+    saved_piece_id: uuid.UUID | None = None
+    fit_id: uuid.UUID | None = None
+    item_id: uuid.UUID | None = None
+    image_id: uuid.UUID | None = None
+    category: LookCategory | None = None
+    name: Annotated[str | None, Field(max_length=100), CleanText] = None
+    brand: Annotated[str | None, Field(max_length=100), CleanText] = None
+    color: Annotated[str | None, Field(max_length=50), CleanText] = None
+    url: HttpUrl = None
+
+    @model_validator(mode="after")
+    def check_source(self) -> Self:
+        sources = [self.saved_piece_id is not None, self.fit_id is not None, self.image_id is not None]
+        if sum(sources) != 1:
+            raise ValueError("Give a piece exactly one of saved_piece_id, fit_id + item_id, or image_id")
+        if (self.fit_id is None) != (self.item_id is None):
+            raise ValueError("fit_id and item_id go together")
+        if self.image_id is not None and (self.name is None or self.category is None):
+            raise ValueError("An uploaded piece needs a name and a category")
+        return self
+
+
+class LookIn(BaseModel):
+    pieces: list[LookPieceIn] = Field(min_length=1, max_length=LOOK_MAX_PIECES)
+    tryon_id: uuid.UUID | None = Field(
+        default=None, description="A try-on you made of the look (on the asker's photo); its result is shown."
+    )
+
+
 class MessageCreate(BaseModel):
-    kind: Literal["text", "image", "fit_check", "product", "fit"]
+    kind: Literal["text", "image", "fit_check", "product", "fit", "style_request", "styled_look"]
     body: Annotated[str | None, Field(max_length=settings.MESSAGE_MAX_LENGTH), CleanText] = None
     image_id: uuid.UUID | None = None
     question: Annotated[str | None, Field(max_length=280), CleanText] = None
     context: Annotated[str | None, Field(max_length=60), CleanText] = None
     fit_id: uuid.UUID | None = None
     product: ProductIn | None = None
+    # styled_look: the style_request it answers, and the look.
+    request_id: uuid.UUID | None = None
+    look: LookIn | None = None
     client_id: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
@@ -69,6 +118,8 @@ class MessageCreate(BaseModel):
             "fit_check": ("image_id", "question"),
             "product": ("product",),
             "fit": ("fit_id",),
+            "style_request": (),
+            "styled_look": ("request_id", "look"),
         }[self.kind]
         missing = [field for field in required if getattr(self, field) is None]
         if missing:

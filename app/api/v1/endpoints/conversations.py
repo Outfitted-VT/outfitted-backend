@@ -16,6 +16,7 @@ from app.schemas.conversation import (
 from app.schemas.error import ErrorResponse
 from app.schemas.pagination import Page
 from app.services import conversation as service
+from app.services import styling
 from app.services.image import ImageNotFoundError
 
 router = APIRouter()
@@ -119,8 +120,16 @@ def send_message(
 ) -> MessageRead:
     """
     `kind` is `text` (`body`), `image` (`image_id` from `POST /images`), `fit_check` (`image_id`
-    and `question`, optional `context` and `fit_id`), or `product` (`product`). Send a `client_id`
-    so retrying a send that already reached the server returns the stored message.
+    and `question`, optional `context` and `fit_id`), `product` (`product`), or `fit` (`fit_id`).
+    Send a `client_id` so retrying a send that already reached the server returns the stored message.
+
+    Style a Friend:
+
+    - `style_request` asks the chat to style you: optional `body` (the occasion, a budget) and
+      optional `image_id`, a photo of yourself a friend may use for a try-on of their look.
+    - `styled_look` answers one: `request_id` and `look`, the pieces (from your saved pieces,
+      fits you can see, or new uploads) with their links, and optionally `tryon_id`, a try-on
+      you made of it with `POST /tryons` and the request's `style_request_id`.
     """
     try:
         return service.send_message(db, current_user, conversation_id, data)
@@ -141,6 +150,18 @@ def send_message(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="client_id was already used in another conversation"
         ) from None
+    except styling.StyleRequestNotFoundError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Style request not found") from None
+    except styling.OwnStyleRequestError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="You can't send a look for your own request"
+        ) from None
+    except styling.LookPieceNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="A piece of the look wasn't found"
+        ) from None
+    except styling.LookTryOnNotFoundError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Try-on not found") from None
 
 
 @router.post("/{conversation_id}/read", responses=NOT_FOUND, summary="Mark the conversation read")

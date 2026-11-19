@@ -9,7 +9,9 @@ from app.db.mixins import utcnow
 from app.models.user import User
 
 CONVERSATION_TYPES = ("direct", "circle")
-MESSAGE_KINDS = ("text", "image", "fit_check", "product", "story_reply")
+# style_request: "style me", asking the chat for a look. styled_look: a look sent back for one
+# (pieces with links, and optionally a try-on on the asker's photo). See app/services/styling.py.
+MESSAGE_KINDS = ("text", "image", "fit_check", "product", "story_reply", "style_request", "styled_look")
 FIT_CHECK_VOTES = ("wear", "rethink")
 
 
@@ -68,7 +70,7 @@ class Message(Base):
         ForeignKey("conversations.id", ondelete="CASCADE")
     )
     sender_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
-    kind: Mapped[str] = mapped_column(String(12))
+    kind: Mapped[str] = mapped_column(String(20))
     body: Mapped[str | None] = mapped_column(Text)
     payload: Mapped[dict | None] = mapped_column(JSON)
     client_id: Mapped[str | None] = mapped_column(String(64))

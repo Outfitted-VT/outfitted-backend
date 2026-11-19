@@ -66,6 +66,11 @@ class TryOnCreate(BaseModel):
         description="\"Try this look\": the fit being copied. Its photos and its try-on's "
         "clothing photos may then be used even though another user uploaded them.",
     )
+    style_request_id: uuid.UUID | None = Field(
+        default=None,
+        description="Style a Friend: the friend's style_request message. `person_image_id` is then "
+        "the photo they sent with it, and photos of your saved pieces and saved fits may be used.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
